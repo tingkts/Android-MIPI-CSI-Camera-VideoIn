@@ -1,0 +1,53 @@
+#!/system/bin/sh
+
+cd ./sys/devices/platform/soc/1b0c000.qcom,cci/1b0c000.qcom,cci:qcom,camera@2
+
+echo "${pwd}"
+
+// abbreviation of "cs" means that camera sensor
+cat cs_rw_reg ;
+
+echo "0x5188 0x0a" > cs_rw_reg ; cat cs_rw_reg ;
+
+echo "0x5188 0x0a" > cs_rw_reg ; \
+echo "0x5189 0x75" > cs_rw_reg ; \
+echo "0x518a 0x52" > cs_rw_reg ; \
+echo "0x518b 0xea" > cs_rw_reg ; \
+echo "0x518c 0xa8" > cs_rw_reg ; \
+echo "0x518d 0x42" > cs_rw_reg ; \
+echo "0x518e 0x38" > cs_rw_reg ; \
+echo "0x518f 0x56" > cs_rw_reg ; \
+echo "0x5190 0x42" > cs_rw_reg ; \
+echo "0x5191 0xf8" > cs_rw_reg ; \
+echo "0x5192 0x04" > cs_rw_reg ; \
+echo "0x5193 0x70" > cs_rw_reg ; \
+echo "0x5194 0xf0" > cs_rw_reg ; \
+echo "0x5195 0xf0" > cs_rw_reg ; \
+echo "0x5196 0x03" > cs_rw_reg ; \
+echo "0x5197 0x01" > cs_rw_reg ; \
+echo "0x5198 0x04" > cs_rw_reg ; \
+echo "0x5199 0x12" > cs_rw_reg ; \
+echo "0x519a 0x04" > cs_rw_reg ; \
+echo "0x519b 0x00" > cs_rw_reg ; \
+echo "0x519c 0x06" > cs_rw_reg ; \
+echo "0x519d 0x82" > cs_rw_reg ;
+
+
+// read single register value of register address 0x5194
+echo "0x5194" > cs_rw_reg ; cat cs_rw_reg ;
+
+// read continuous register values of a range of register addresses
+echo "0x5188 0x519d" > cs_rw_reg ; cat cs_rw_reg ;
+
+
+
+
+// START_REG_ARRAY
+echo "0x3008 0x02" > cs_rw_reg ; cat cs_rw_reg ;
+
+// STOP_REG_ARRAY
+echo "0x3008 0x42" > cs_rw_reg ; cat cs_rw_reg ;
+
+
+// color patterm
+echo "0x503d 0x80" > cs_rw_reg ; cat cs_rw_reg ;

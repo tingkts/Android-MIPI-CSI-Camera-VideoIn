@@ -1,0 +1,226 @@
+From 73b22c1f695764a16d8d37b41a4bdfbe5388dac8 Mon Sep 17 00:00:00 2001
+From: tingsung <tingsung@msi.com>
+Date: Thu, 1 Aug 2019 17:30:44 +0800
+Subject: [PATCH] porting ov5640
+
+---
+ arch/arm/boot/dts/msi-imx6qdl-sabresd.dtsi |   2 +-
+ arch/arm/boot/dts/msi-ms5760.dts           | 184 +++++++++++++++++++++
+ 2 files changed, 185 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm/boot/dts/msi-imx6qdl-sabresd.dtsi b/arch/arm/boot/dts/msi-imx6qdl-sabresd.dtsi
+index b3c8344276c3..1f0080ad91e7 100755
+--- a/arch/arm/boot/dts/msi-imx6qdl-sabresd.dtsi
++++ b/arch/arm/boot/dts/msi-imx6qdl-sabresd.dtsi
+@@ -170,7 +170,7 @@
+ 			regulator-name = "sensor-supply";
+ 			regulator-min-microvolt = <3300000>;
+ 			regulator-max-microvolt = <3300000>;
+-			gpio = <&gpio2 31 0>;
++			//gpio = <&gpio2 31 0>;
+ 			startup-delay-us = <500>;
+ 			enable-active-high;
+ 		};
+diff --git a/arch/arm/boot/dts/msi-ms5760.dts b/arch/arm/boot/dts/msi-ms5760.dts
+index 768dcd435d52..61381fbd8840 100644
+--- a/arch/arm/boot/dts/msi-ms5760.dts
++++ b/arch/arm/boot/dts/msi-ms5760.dts
+@@ -20,6 +20,48 @@
+ 	compatible = "fsl,imx6q-sabresd", "fsl,imx6q";
+ };
+ 
++/ {
++	regulators {
++		compatible = "simple-bus";
++		#address-cells = <1>;
++		#size-cells = <0>;
++
++		reg_vgen2: vgen2 {
++			compatible = "regulator-fixed";
++			regulator-name = "camera_1v5";
++			regulator-min-microvolt = <1500000>;
++			regulator-max-microvolt = <1500000>;
++			gpio = <&gpio3 17 0>;
++			startup-delay-us = <5000>;
++			regulator-boot-on;
++			regulator-always-on;
++			enable-active-high;
++		};
++
++		reg_vgen3: vgen3 {
++			compatible = "regulator-fixed";
++			regulator-name = "camera_2v8";
++			regulator-min-microvolt = <2800000>;
++			regulator-max-microvolt = <2800000>;
++			gpio = <&gpio2 25 0>;
++			regulator-boot-on;
++			regulator-always-on;
++			enable-active-high;
++		};
++
++		reg_vgen4: vgen4 {
++			compatible = "regulator-fixed";
++			regulator-name = "camera_2v5";
++			regulator-min-microvolt = <2500000>;
++			regulator-max-microvolt = <2500000>;
++			gpio = <&gpio2 27 0>;
++			regulator-boot-on;
++			regulator-always-on;
++			enable-active-high;
++		};
++	};
++};
++
+ &gpc {
+ 	/* use ldo-enable, u-boot will check it and configure */
+ 	fsl,ldo-bypass = <0>;
+@@ -75,3 +117,145 @@
+ 	clock-lanes = <0>;
+ 	data-lanes = <1 2>;
+ };
++
++
++&i2c2 {
++	clock-frequency = <200000>;
++	pinctrl-names = "default";
++	pinctrl-0 = <&pinctrl_i2c2>;
++	status = "okay";
++
++	ov564x_mipi: ov564x_mipi@3c { /* i2c2 driver */
++		compatible = "ovti,ov564x_mipi";
++		reg = <0x3c>;
++		clocks = <&clks 201>;
++		clock-names = "csi_mclk";
++		DOVDD-supply = <&reg_vgen4>; /* 2.5v */
++		AVDD-supply = <&reg_vgen3>;  /* 2.8v, rev C board is VGEN3
++						rev B board is VGEN5 */
++		DVDD-supply = <&reg_vgen2>;  /* 1.5v */
++		pwn-gpios = <&gpio2 28 0>;   /* active high */
++		rst-gpios = <&gpio2 31 1>;   /* active low  */
++		strobe-gpios = <&gpio2 0 0>; /*active high*/
++		flash-gpios = <&gpio4 15 0>; /*active high*/
++		csi_id = <1>;
++		mclk = <24000000>;
++		mclk_source = <0>;
++	};
++};
++
++&iomuxc {
++	pinctrl-names = "default";
++	pinctrl-0 = <&pinctrl_hog>;
++
++	imx6qdl-sabresd {
++		pinctrl_hog: hoggrp {
++			fsl,pins = <
++				MX6QDL_PAD_GPIO_0__CCM_CLKO1		0x000130b0
++				MX6QDL_PAD_GPIO_2__GPIO1_IO02		0x0001b0b0
++				MX6QDL_PAD_GPIO_4__GPIO1_IO04		0x0001b0b0
++				MX6QDL_PAD_GPIO_5__GPIO1_IO05		0x0001b0b0
++				MX6QDL_PAD_GPIO_7__GPIO1_IO07		0x0001b0b0
++				MX6QDL_PAD_GPIO_8__GPIO1_IO08		0x0001b0b0
++				MX6QDL_PAD_GPIO_16__GPIO7_IO11		0x0001b0b0
++				MX6QDL_PAD_GPIO_17__GPIO7_IO12		0x0001b0b0
++				MX6QDL_PAD_GPIO_18__GPIO7_IO13		0x0001b0b0
++				MX6QDL_PAD_GPIO_19__GPIO4_IO05		0x0001b0b0
++				MX6QDL_PAD_NANDF_D0__GPIO2_IO00		0x0001b0b0
++				MX6QDL_PAD_NANDF_D1__GPIO2_IO01		0x0001b0b0
++				MX6QDL_PAD_NANDF_D2__GPIO2_IO02		0x0001b0b0
++				MX6QDL_PAD_NANDF_D3__GPIO2_IO03		0x0001b0b0
++				MX6QDL_PAD_NANDF_D4__GPIO2_IO04		0x0001b0b0
++				MX6QDL_PAD_NANDF_D5__GPIO2_IO05		0x0001b0b0
++				MX6QDL_PAD_NANDF_D6__GPIO2_IO06		0x0001b0b0
++				MX6QDL_PAD_NANDF_D7__GPIO2_IO07		0x0001b0b0
++				MX6QDL_PAD_NANDF_CS0__GPIO6_IO11	0x000130b0
++				MX6QDL_PAD_NANDF_CS1__GPIO6_IO14	0x0001b0b0
++				MX6QDL_PAD_NANDF_CS3__GPIO6_IO16	0x0001b0b0
++				MX6QDL_PAD_NANDF_ALE__GPIO6_IO08 	0x0001b0b0
++				MX6QDL_PAD_NANDF_CLE__GPIO6_IO07	0x0001b0b0
++				MX6QDL_PAD_NANDF_WP_B__GPIO6_IO09	0x0001b0b0
++				MX6QDL_PAD_NANDF_RB0__GPIO6_IO10	0x0001b0b0
++				MX6QDL_PAD_ENET_MDC__GPIO1_IO31		0x0001b0b0
++				MX6QDL_PAD_ENET_MDIO__GPIO1_IO22	0x0001b0b0
++				MX6QDL_PAD_ENET_CRS_DV__GPIO1_IO25	0x0001b0b0
++				MX6QDL_PAD_ENET_REF_CLK__GPIO1_IO23	0x0001b0b0
++				MX6QDL_PAD_ENET_TX_EN__GPIO1_IO28	0x0001b0b0
++				MX6QDL_PAD_ENET_RXD1__GPIO1_IO26	0x0001b0b0
++				MX6QDL_PAD_ENET_TXD0__GPIO1_IO30	0x0001b0b0
++				MX6QDL_PAD_ENET_TXD1__GPIO1_IO29	0x0001b0b0
++				MX6QDL_PAD_KEY_COL2__GPIO4_IO10		0x0001b0b0
++				MX6QDL_PAD_KEY_ROW2__GPIO4_IO11		0x0001b0b0
++				MX6QDL_PAD_KEY_COL4__GPIO4_IO14		0x0001b0b0
++				MX6QDL_PAD_KEY_ROW4__GPIO4_IO15		0x0001b0b0
++				MX6QDL_PAD_SD2_CMD__GPIO1_IO11		0x0001b0b0
++				MX6QDL_PAD_SD2_CLK__GPIO1_IO10		0x0001b0b0
++#if 0 //HW V1.7 BT connect to I2S bus		//20170119 Will move to mach-imx6q.c	 init_BT_SCO_I2S_GPIO()
++				MX6QDL_PAD_SD2_DAT0__GPIO1_IO15		0x0001b0b0
++				MX6QDL_PAD_SD2_DAT1__GPIO1_IO14		0x0001b0b0
++				MX6QDL_PAD_SD2_DAT2__GPIO1_IO13		0x0001b0b0
++				MX6QDL_PAD_SD2_DAT3__GPIO1_IO12		0x0001b0b0
++#endif	
++				MX6QDL_PAD_SD4_DAT4__GPIO2_IO12		0x0001b0b0
++				MX6QDL_PAD_SD4_DAT7__GPIO2_IO15		0x0001b0b0
++				MX6QDL_PAD_CSI0_DATA_EN__GPIO5_IO20	0x0001b0b0
++				MX6QDL_PAD_EIM_EB0__GPIO2_IO28		0x0001b0b0
++				MX6QDL_PAD_EIM_EB1__GPIO2_IO29		0x0001b0b0
++				MX6QDL_PAD_EIM_EB2__GPIO2_IO30		0x0001b0b0
++				MX6QDL_PAD_EIM_EB3__GPIO2_IO31		0x0001b0b0
++				MX6QDL_PAD_EIM_CS0__GPIO2_IO23		0x0001b0b0
++				MX6QDL_PAD_EIM_CS1__GPIO2_IO24		0x0001b0b0
++				MX6QDL_PAD_EIM_A16__GPIO2_IO22		0x0001b0b0
++				MX6QDL_PAD_EIM_A17__GPIO2_IO21		0x0001b0b0
++				MX6QDL_PAD_EIM_A18__GPIO2_IO20		0x0001b0b0
++				MX6QDL_PAD_EIM_A19__GPIO2_IO19		0x0001b0b0
++				MX6QDL_PAD_EIM_A20__GPIO2_IO18		0x0001b0b0
++				MX6QDL_PAD_EIM_A21__GPIO2_IO17		0x0001b0b0
++				MX6QDL_PAD_EIM_A22__GPIO2_IO16		0x0001b0b0
++				MX6QDL_PAD_EIM_A23__GPIO6_IO06		0x0001b0b0
++				MX6QDL_PAD_EIM_A24__GPIO5_IO04		0x0001b0b0
++				MX6QDL_PAD_EIM_A25__GPIO5_IO02		0x0001a8b0 
++				MX6QDL_PAD_EIM_DA0__GPIO3_IO00		0x0001b0b0
++				MX6QDL_PAD_EIM_DA1__GPIO3_IO01		0x0001b0b0
++				MX6QDL_PAD_EIM_DA2__GPIO3_IO02		0x0001b0b0
++				MX6QDL_PAD_EIM_DA3__GPIO3_IO03		0x0001b0b0
++				MX6QDL_PAD_EIM_DA4__GPIO3_IO04		0x0001b0b0
++				MX6QDL_PAD_EIM_DA5__GPIO3_IO05		0x0001b0b0
++				MX6QDL_PAD_EIM_DA6__GPIO3_IO06		0x0001b0b0
++				MX6QDL_PAD_EIM_DA7__GPIO3_IO07		0x0001b0b0
++				MX6QDL_PAD_EIM_DA8__GPIO3_IO08		0x0001b0b0
++				MX6QDL_PAD_EIM_DA9__GPIO3_IO09		0x0001b0b0
++				MX6QDL_PAD_EIM_DA10__GPIO3_IO10		0x0001b0b0
++				MX6QDL_PAD_EIM_DA11__GPIO3_IO11		0x0001b0b0
++				MX6QDL_PAD_EIM_DA12__GPIO3_IO12		0x0001b0b0
++				MX6QDL_PAD_EIM_DA13__GPIO3_IO13		0x0001b0b0
++				MX6QDL_PAD_EIM_DA14__GPIO3_IO14		0x0001b0b0
++				MX6QDL_PAD_EIM_DA15__GPIO3_IO15		0x0001b0b0
++				MX6QDL_PAD_EIM_D16__GPIO3_IO16		0x0001b0b0
++				MX6QDL_PAD_EIM_D17__GPIO3_IO17		0x0001b0b0
++				MX6QDL_PAD_EIM_D18__GPIO3_IO18		0x0001b0b0
++				MX6QDL_PAD_EIM_D19__GPIO3_IO19		0x0001b0b0
++				MX6QDL_PAD_EIM_D20__GPIO3_IO20		0x0001b0b0
++				MX6QDL_PAD_EIM_D21__GPIO3_IO21		0x0001b0b0
++				MX6QDL_PAD_EIM_D22__GPIO3_IO22		0x0001b0b0
++				MX6QDL_PAD_EIM_D23__GPIO3_IO23		0x0001b0b0
++				MX6QDL_PAD_EIM_D30__GPIO3_IO30		0x0001b0b0
++				MX6QDL_PAD_EIM_D31__GPIO3_IO31		0x0001a8b0
++				MX6QDL_PAD_EIM_LBA__GPIO2_IO27		0x0001b0b0
++				MX6QDL_PAD_EIM_OE__GPIO2_IO25		0x0001b0b0
++				MX6QDL_PAD_EIM_RW__GPIO2_IO26		0x0001b0b0
++				MX6QDL_PAD_EIM_BCLK__GPIO6_IO31		0x0001b0b0
++				MX6QDL_PAD_EIM_WAIT__GPIO5_IO00		0x0001b0b0
++			>;
++		};
++	};
++
++	i2c2 {
++		pinctrl_i2c2: i2c2grp {
++			fsl,pins = <
++				MX6QDL_PAD_KEY_COL3__I2C2_SCL		0x4001b8b1
++				MX6QDL_PAD_KEY_ROW3__I2C2_SDA		0x4001b8b1
++			>;
++		};
++	};
++};
+\ No newline at end of file
+-- 
+2.21.0
+

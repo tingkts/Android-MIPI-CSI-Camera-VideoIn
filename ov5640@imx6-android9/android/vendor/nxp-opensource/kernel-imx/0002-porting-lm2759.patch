@@ -1,0 +1,396 @@
+From e96c328b42a5356404611eedfeeb134fc5aa1382 Mon Sep 17 00:00:00 2001
+From: tingsung <tingsung@msi.com>
+Date: Mon, 5 Aug 2019 17:40:06 +0800
+Subject: [PATCH] porting lm2759
+
+---
+ arch/arm/boot/dts/msi-ms5760.dts          |  23 ++
+ arch/arm/configs/ms5760_android_defconfig |   1 +
+ drivers/leds/Kconfig                      |   7 +
+ drivers/leds/Makefile                     |   1 +
+ drivers/leds/leds-lm2759.c                | 290 ++++++++++++++++++++++
+ 5 files changed, 322 insertions(+)
+ create mode 100644 drivers/leds/leds-lm2759.c
+
+diff --git a/arch/arm/boot/dts/msi-ms5760.dts b/arch/arm/boot/dts/msi-ms5760.dts
+index 61381fbd8840..99eaac3b8853 100644
+--- a/arch/arm/boot/dts/msi-ms5760.dts
++++ b/arch/arm/boot/dts/msi-ms5760.dts
+@@ -118,6 +118,20 @@
+ 	data-lanes = <1 2>;
+ };
+ 
++&i2c1 {
++	clock-frequency = <400000>;
++	pinctrl-names = "default";
++	pinctrl-0 = <&pinctrl_i2c1>;
++	status = "okay";
++
++	lm2759_led@53 {
++		compatible = "ti,lm2759";
++		reg = <0x53>;
++		led-name = "led1";
++		led-mode = <0x1>;
++		led-level = <0xf>;
++	};
++};
+ 
+ &i2c2 {
+ 	clock-frequency = <200000>;
+@@ -250,6 +264,15 @@
+ 		};
+ 	};
+ 
++	i2c1 {
++		pinctrl_i2c1: i2c1grp {
++			fsl,pins = <
++				MX6QDL_PAD_CSI0_DAT8__I2C1_SDA 0x4001b8b1
++				MX6QDL_PAD_CSI0_DAT9__I2C1_SCL 0x4001b8b1
++			>;
++		};
++	};
++
+ 	i2c2 {
+ 		pinctrl_i2c2: i2c2grp {
+ 			fsl,pins = <
+diff --git a/arch/arm/configs/ms5760_android_defconfig b/arch/arm/configs/ms5760_android_defconfig
+index 6017748c24ef..227eabdb2ee2 100644
+--- a/arch/arm/configs/ms5760_android_defconfig
++++ b/arch/arm/configs/ms5760_android_defconfig
+@@ -4132,6 +4132,7 @@ CONFIG_LEDS_GPIO=y
+ # CONFIG_LEDS_LM355x is not set
+ # CONFIG_LEDS_IS31FL319X is not set
+ # CONFIG_LEDS_IS31FL32XX is not set
++CONFIG_LEDS_LM2759=y
+ 
+ #
+ # LED driver for blink(1) USB RGB LED is under Special HID drivers (HID_THINGM)
+diff --git a/drivers/leds/Kconfig b/drivers/leds/Kconfig
+index 52ea34e337cd..1b370958c354 100644
+--- a/drivers/leds/Kconfig
++++ b/drivers/leds/Kconfig
+@@ -584,6 +584,13 @@ config LEDS_LM355x
+ 	  This option enables support for LEDs connected to LM355x.
+ 	  LM355x includes Torch, Flash and Indicator functions.
+ 
++config LEDS_LM2759
++	tristate "LED driver for LM2759 Torch/Flash LED"
++	depends on I2C
++	help
++	  This option enables support for LM2759 Torch/Flash LED driver chips
++	  accessed via the I2C bus.
++
+ config LEDS_OT200
+ 	tristate "LED support for the Bachmann OT200"
+ 	depends on LEDS_CLASS && HAS_IOMEM && (X86_32 || COMPILE_TEST)
+diff --git a/drivers/leds/Makefile b/drivers/leds/Makefile
+index 35980450db9b..635b7277fbef 100644
+--- a/drivers/leds/Makefile
++++ b/drivers/leds/Makefile
+@@ -62,6 +62,7 @@ obj-$(CONFIG_LEDS_ASIC3)		+= leds-asic3.o
+ obj-$(CONFIG_LEDS_MAX77693)		+= leds-max77693.o
+ obj-$(CONFIG_LEDS_MAX8997)		+= leds-max8997.o
+ obj-$(CONFIG_LEDS_LM355x)		+= leds-lm355x.o
++obj-$(CONFIG_LEDS_LM2759)		+= leds-lm2759.o
+ obj-$(CONFIG_LEDS_BLINKM)		+= leds-blinkm.o
+ obj-$(CONFIG_LEDS_SYSCON)		+= leds-syscon.o
+ obj-$(CONFIG_LEDS_MENF21BMC)		+= leds-menf21bmc.o
+diff --git a/drivers/leds/leds-lm2759.c b/drivers/leds/leds-lm2759.c
+new file mode 100644
+index 000000000000..e6341b8d426f
+--- /dev/null
++++ b/drivers/leds/leds-lm2759.c
+@@ -0,0 +1,290 @@
++/*
++ * leds-lm2759.c - RGB LED Driver
++ *
++ * Copyright (C) 2009 Samsung Electronics
++ * Kim Kyuwon <q1.kim@samsung.com>
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 as
++ * published by the Free Software Foundation.
++ *
++ * Datasheet: http://www.rohm.com/products/databook/driver/pdf/lm2759gu-e.pdf
++ *
++ */
++
++#include <linux/module.h>
++#include <linux/i2c.h>
++#include <linux/gpio.h>
++#include <linux/delay.h>
++#include <linux/leds.h>
++#include <linux/slab.h>
++#include <linux/of.h>
++#include <linux/ctype.h>
++
++#define LM2759_REG_GPR 		0x10
++#define LM2759_REG_TCR 		0xa0
++#define LM2759_REG_FCR		0xb0
++#define LM2759_REG_FTDR		0xc0
++
++struct lm2759_led_data {
++	const char *name;
++	int mode;	// 0 is flash mode, 1 is torch mode.
++	int level;	// level is from 0 to 15
++};
++
++struct lm2759_led {
++	struct i2c_client		*client;
++	struct led_classdev		cdev_led;
++};
++
++static int lm2759_write_byte(struct i2c_client *client, u8 reg, u8 val)
++{
++	int ret = i2c_smbus_write_byte_data(client, reg, val);
++
++	if (ret >= 0)
++		return 0;
++
++	dev_err(&client->dev, "%s: reg 0x%x, val 0x%x, err %d\n",
++						__func__, reg, val, ret);
++
++	return ret;
++}
++
++static void lm2759_set(struct led_classdev *led_cdev, enum led_brightness value)
++{
++	struct lm2759_led *led = container_of(led_cdev, struct lm2759_led, cdev_led);
++	struct lm2759_led_data *pdata = led->client->dev.platform_data;
++
++	if (value) {
++		if (pdata->mode) {
++			lm2759_write_byte(led->client, LM2759_REG_GPR, 1);
++		} else {
++			lm2759_write_byte(led->client, LM2759_REG_GPR, 3);
++		}
++	} else {
++		lm2759_write_byte(led->client, LM2759_REG_GPR, 0);
++	}
++}
++
++static int lm2759_register_led_classdev(struct lm2759_led *led)
++{
++	struct lm2759_led_data *pdata = led->client->dev.platform_data;
++
++	led->cdev_led.name = pdata->name;
++	led->cdev_led.brightness = LED_OFF;
++	led->cdev_led.brightness_set = lm2759_set;
++	lm2759_write_byte(led->client, LM2759_REG_TCR, pdata->level);
++	lm2759_write_byte(led->client, LM2759_REG_FCR, pdata->level);
++	lm2759_write_byte(led->client, LM2759_REG_FTDR, 0x7);
++	lm2759_write_byte(led->client, LM2759_REG_GPR, 0);
++	printk("==============register LED : %s \n", led->cdev_led.name);
++	return led_classdev_register(&led->client->dev, &led->cdev_led);
++}
++
++static void lm2759_unregister_led_classdev(struct lm2759_led *led)
++{
++	led_classdev_unregister(&led->cdev_led);
++}
++
++static ssize_t lm2759_mode_read(struct device *dev,
++						struct device_attribute *attr, char *buf)
++{
++	struct i2c_client *client = to_i2c_client(dev);
++	struct lm2759_led_data *pdata = client->dev.platform_data;
++
++	return sprintf(buf, "%d\n", pdata->mode);
++}
++
++static ssize_t lm2759_mode_write(struct device *dev, struct device_attribute *attr,
++						const char *buf, size_t size)
++{
++	ssize_t count, ret = -EINVAL;
++	char *after;
++	int mode;
++	struct i2c_client *client = to_i2c_client(dev);
++	struct lm2759_led_data *pdata = client->dev.platform_data;
++
++	mode = simple_strtoul(buf, &after, 10);
++	count = after - buf;
++
++	if (isspace(*after))
++		count++;
++
++	if (count == size) {
++		ret = count;
++	}
++	
++	if (mode == 1) {
++		pdata->mode = mode;
++	} else if (mode == 0) {
++		pdata->mode = mode;
++	} else {
++		printk("wrong led mode !!\n");
++	}
++	return ret;
++}
++
++static ssize_t lm2759_level_read(struct device *dev,
++						struct device_attribute *attr, char *buf)
++{
++	struct i2c_client *client = to_i2c_client(dev);
++	struct lm2759_led_data *pdata = client->dev.platform_data;
++
++	return sprintf(buf, "%d\n", pdata->level);
++}
++
++static ssize_t lm2759_level_write(struct device *dev, struct device_attribute *attr,
++						const char *buf, size_t size)
++{
++	ssize_t count, ret = -EINVAL;
++	char *after;
++	int level;
++	struct i2c_client *client = to_i2c_client(dev);
++	struct lm2759_led_data *pdata = client->dev.platform_data;
++
++	level = simple_strtoul(buf, &after, 10);
++	count = after - buf;
++
++	if (isspace(*after))
++		count++;
++
++	if (count == size) {
++		ret = count;
++	}
++	
++	if ((level >= 0) && (level <= 15)) {
++		pdata->level = level;
++		lm2759_write_byte(client, LM2759_REG_TCR, level);
++		lm2759_write_byte(client, LM2759_REG_FCR, level);
++	} else {
++		printk("wrong led current level !!\n");
++	}
++	return ret;
++}
++
++static DEVICE_ATTR(mode, S_IRUGO|S_IWUSR, lm2759_mode_read, lm2759_mode_write);
++static DEVICE_ATTR(level, S_IRUGO|S_IWUSR, lm2759_level_read, lm2759_level_write);
++
++static struct attribute *lm2759_led_attr[] = {
++	&dev_attr_mode.attr,
++	&dev_attr_level.attr,
++	NULL
++};
++
++static struct attribute_group lm2759_led_attribute_group = {
++	.attrs = lm2759_led_attr
++};
++
++static int lm2759_probe(struct i2c_client *client,
++			const struct i2c_device_id *id)
++{
++	struct device_node *np = client->dev.of_node;
++	struct lm2759_led_data *pdata;
++	struct lm2759_led *led;
++	int ret;
++
++	pdata = devm_kzalloc(&client->dev,
++			sizeof(struct lm2759_led_data), GFP_KERNEL);
++	if (!pdata) {
++		printk("failed to get lm2759 led driver platform data\n");
++		return -ENOMEM;
++	}
++
++	ret = of_property_read_string_index(np, "led-name", 0, &(pdata->name));
++	if (ret) {
++		printk("led name property not found\n");
++		return -EPERM;
++	}
++		
++	ret = of_property_read_u32(np, "led-mode", &(pdata->mode));
++	if (ret) {
++		printk("led mode property not found, set led as flash mode\n");
++		pdata->mode = 0;
++	}
++
++	ret = of_property_read_u32(np, "led-level", &(pdata->level));
++	if (ret) {
++		printk("led mode property not found, set current level as 2\n");
++		pdata->level = 2;
++	}
++
++	client->dev.platform_data = pdata;
++
++	led = kzalloc(sizeof(struct lm2759_led), GFP_KERNEL);
++	if (!led) {
++		printk("failed to allocate lm2759 led driver data\n");
++		return -ENOMEM;
++	}
++	led->client = client;
++
++	i2c_set_clientdata(client, led);
++
++	ret = lm2759_write_byte(client, LM2759_REG_GPR, 0x00);
++	if (ret) {
++		printk("set led as off mode failed!!\n");
++		goto error_free;
++	}
++
++	ret = lm2759_register_led_classdev(led);
++	if (ret) {
++		printk("lm2759 register class deivce is failed!!\n");
++		goto error_free;
++	}
++	ret = sysfs_create_group(&client->dev.kobj, &lm2759_led_attribute_group);
++	if (ret) {
++		printk("lm2759 create sys group is failed!!\n");
++	}
++	return 0;
++	
++error_free:
++	kfree(led);
++	return ret;
++}
++
++static int lm2759_remove(struct i2c_client *client)
++{
++	struct lm2759_led *led = i2c_get_clientdata(client);
++
++	lm2759_unregister_led_classdev(led);
++	kfree(led);
++
++	return 0;
++}
++
++static const struct i2c_device_id lm2759_id[] = {
++	{ "LM2759", 0 },
++	{ }
++};
++MODULE_DEVICE_TABLE(i2c, lm2759_id);
++
++static const struct of_device_id of_lm2759_leds_match[] = {
++	{ .compatible = "ti,lm2759", },
++	{},
++};
++
++static struct i2c_driver lm2759_i2c_driver = {
++	.driver	= {
++		.name	= "leds-lm2759",
++		.owner	 = THIS_MODULE,
++		.of_match_table = of_match_ptr(of_lm2759_leds_match),
++	},
++	.probe		= lm2759_probe,
++	.remove		= lm2759_remove,
++	.id_table	= lm2759_id,
++};
++
++static int __init lm2759_init(void)
++{
++	return i2c_add_driver(&lm2759_i2c_driver);
++}
++module_init(lm2759_init);
++
++static void __exit lm2759_exit(void)
++{
++	i2c_del_driver(&lm2759_i2c_driver);
++}
++module_exit(lm2759_exit);
++
++MODULE_AUTHOR("Kim Kyuwon <q1.kim@samsung.com>");
++MODULE_DESCRIPTION("LM2759 LED driver");
++MODULE_LICENSE("GPL v2");
+-- 
+2.21.0
+

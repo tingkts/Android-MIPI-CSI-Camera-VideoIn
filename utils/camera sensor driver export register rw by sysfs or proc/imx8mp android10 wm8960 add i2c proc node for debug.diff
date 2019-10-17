@@ -1,0 +1,101 @@
+
+Update patch,
+
++static struct file_operations dump_file_ops;
++static struct file_operations w_register_file_ops;
+
+@@ _probe(???) {
++ do {
++ static struct proc_dir_entry *audio_control, *w_register, *dump;
++ audio_control = proc_mkdir("audio_control", NULL);
++ if (audio_control == NULL) {
++ pr_err("Cannot create /proc/audio_control\n");
++ goto end_proc_create;
++ }
++ dump = proc_create("dump", 
+S_IRUSR|S_IRGRP|S_IROTH|S_IWUSR|S_IWGRP|S_IWOTH, audio_control, 
+&dump_file_ops);
++ if (dump == NULL) {
++ remove_proc_entry("dump", NULL);
++ audio_control = NULL;
++ pr_err("Cannot create /proc/audio_control/dump\n");
++ goto end_proc_create;
++ }
++ w_register = proc_create("register", 
+S_IRUSR|S_IRGRP|S_IROTH|S_IWUSR|S_IWGRP|S_IWOTH, audio_control, 
+&w_register_file_ops);
++ if (w_register == NULL) {
++ remove_proc_entry("audio_control", NULL);
++ audio_control = NULL;
++ pr_err("Cannot create /proc/audio_control/register\n");
++ goto end_proc_create;
++ }
++ } while (0);
+}
+
++void wm8960_dump_cache(void)
++{
++ int i;
++ unsigned int value = 0;
++ for(i=0;i<=WM8960_PLL4;i++){
++ //value = snd_soc_read(g_codec, i);
++ value = snd_soc_component_read32(g_codec, i);
++ printk("R%02X: 0x%04x\n",i,value);
++ }
++ return;
++}
++
++static int proc_audio_control_dump_read(struct file *filp,char *buf,size_t count,loff_t 
+*offp) {
++ wm8960_dump_cache();
++ return 0;
++}
++
++static int proc_audio_control_register_write(struct file *file,const char *buffer,size_t 
+count,loff_t *data) {
++ char input_string[64] = {0,};
++ char tmp[64] = {0,};
++ char *ptr;
++ int reg,value;
++ //pr_start("count: zu%d");
++ if (!file || !buffer)
++ {
++ pre_end("count: zu%d", count);
++ return count;
++ }
++ //pr_aio();
++ if (count == 0) {
++ printk("Please input register number and value .\n");
++ return -EINVAL;
++ }
++
++ //memset(input_string, 0, sizeof(input_string));
++ if (copy_from_user(input_string, buffer, count)) {
++ pr_end("failed!");
++ return -EFAULT;
++ }
++
++ ptr = strchr(input_string,' ');
++ if (ptr == NULL)
++ {
++ printk("Please input register number and value in correct format!\n");
++ return -EINVAL;
++ }
++
++ memcpy(tmp,input_string,ptr-input_string);
++ reg = simple_strtol(tmp,NULL,16);
++ //printk("--1.tmp=%s,reg=0x%x,count=%d\n",tmp,reg,count); // todo
++ memcpy(tmp,ptr+1,count-(ptr-input_string)-1);
++ value = simple_strtol(tmp,NULL,16);
++ //printk("--2.tmp=%s,value=0x%x,count=%d\n",tmp,value,count); // todo
++ wm8960_global_write(reg,value);
++ pr_end();
++ return count;
++}
++
++static struct file_operations dump_file_ops = {
++ .read = proc_audio_control_dump_read
++};
++static struct file_operations w_register_file_ops = {
++ .write = proc_audio_control_register_write
++};

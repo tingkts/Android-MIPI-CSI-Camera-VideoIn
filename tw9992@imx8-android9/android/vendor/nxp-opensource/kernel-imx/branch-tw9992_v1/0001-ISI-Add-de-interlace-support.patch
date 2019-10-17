@@ -1,0 +1,775 @@
+From cb02bc040adb2782577ca87bed8d1a54d6af9693 Mon Sep 17 00:00:00 2001
+From: "Qiang.li" <qiang.li@nxp.com>
+Date: Tue, 29 Oct 2019 17:04:23 +0800
+Subject: [PATCH 1/3] ISI: Add de-interlace support.
+
+---
+ drivers/media/platform/imx8/mxc-isi-cap.c     |  76 ++++++++-
+ drivers/media/platform/imx8/mxc-isi-core.c    |  33 +++-
+ drivers/media/platform/imx8/mxc-isi-core.h    |  10 +-
+ drivers/media/platform/imx8/mxc-isi-hw.c      | 149 +++++++++++++++++-
+ drivers/media/platform/imx8/mxc-isi-hw.h      |   4 +
+ drivers/media/platform/imx8/mxc-media-dev.c   |   6 +-
+ drivers/media/platform/imx8/mxc-mipi-csi2.c   |  45 ++++++
+ drivers/media/platform/imx8/mxc-mipi-csi2.h   |   3 +
+ .../media/platform/imx8/mxc-parallel-csi.c    | 100 ++++++++++--
+ .../media/platform/imx8/mxc-parallel-csi.h    |   2 +
+ 10 files changed, 395 insertions(+), 33 deletions(-)
+
+diff --git a/drivers/media/platform/imx8/mxc-isi-cap.c b/drivers/media/platform/imx8/mxc-isi-cap.c
+index 16d43b6a786f..1ef99175096e 100644
+--- a/drivers/media/platform/imx8/mxc-isi-cap.c
++++ b/drivers/media/platform/imx8/mxc-isi-cap.c
+@@ -645,6 +645,7 @@ static struct media_pad *mxc_isi_get_remote_source_pad(struct mxc_isi_dev *mxc_i
+ static int mxc_isi_capture_open(struct file *file)
+ {
+ 	struct mxc_isi_dev *mxc_isi = video_drvdata(file);
++	struct mxc_isi_dev *mxc_isi_temp;
+ 	struct media_pad *source_pad;
+ 	struct v4l2_subdev *sd;
+ 	struct device *dev = &mxc_isi->pdev->dev;
+@@ -687,6 +688,11 @@ static int mxc_isi_capture_open(struct file *file)
+ 		goto fail;
+ 	}
+ 
++	if (mxc_isi->blending) {
++		mxc_isi_temp = mxc_isi_get_weaving_channel();
++		pm_runtime_get_sync(&mxc_isi_temp->pdev->dev);
++	}
++
+ 	return 0;
+ 
+ fail:
+@@ -697,6 +703,7 @@ static int mxc_isi_capture_open(struct file *file)
+ static int mxc_isi_capture_release(struct file *file)
+ {
+ 	struct mxc_isi_dev *mxc_isi = video_drvdata(file);
++	struct mxc_isi_dev *mxc_isi_temp;
+ 	struct media_pad *source_pad;
+ 	struct v4l2_subdev *sd;
+ 	struct device *dev = &mxc_isi->pdev->dev;
+@@ -730,9 +737,23 @@ static int mxc_isi_capture_release(struct file *file)
+ 	mutex_unlock(&mxc_isi->lock);
+ 
+ 	if (atomic_read(&mxc_isi->open_count) > 0 &&
+-		atomic_dec_and_test(&mxc_isi->open_count))
++		atomic_dec_and_test(&mxc_isi->open_count)) {
+ 		mxc_isi_channel_deinit(mxc_isi);
+ 
++		if (mxc_isi->blending) {
++			mxc_isi_temp = mxc_isi_get_weaving_channel();
++			if (mxc_isi_temp->bld_buf_vaddr) {
++				dma_free_coherent(&mxc_isi->pdev->dev,
++					PAGE_ALIGN(mxc_isi_temp->bld_buf_size),
++					mxc_isi_temp->bld_buf_vaddr, mxc_isi_temp->bld_buf_paddr);
++				mxc_isi_temp->bld_buf_vaddr = NULL;
++				mxc_isi_temp->bld_buf_paddr = 0;
++			}
++			mxc_isi_channel_deinit(mxc_isi_temp);
++			pm_runtime_put(&mxc_isi_temp->pdev->dev);
++		}
++	}
++
+ 	ret = v4l2_subdev_call(sd, core, s_power, 0);
+ 	if (ret < 0 && ret != -ENOIOCTLCMD) {
+ 		v4l2_err(mxc_isi->v4l2_dev, "%s s_power fail\n", __func__);
+@@ -905,6 +926,10 @@ static int mxc_isi_source_fmt_init(struct mxc_isi_dev *mxc_isi)
+ 		return -EINVAL;
+ 	}
+ 
++	if (src_fmt.format.field == V4L2_FIELD_INTERLACED) {
++		mxc_isi_channel_set_deinterlace(mxc_isi);
++	}
++
+ 	return 0;
+ }
+ 
+@@ -991,6 +1016,7 @@ static int mxc_isi_cap_s_fmt_mplane(struct file *file, void *priv,
+ 
+ static int mxc_isi_config_parm(struct mxc_isi_dev *mxc_isi)
+ {
++	struct mxc_isi_dev *mxc_isi_temp;
+ 	int ret;
+ 
+ 	ret = mxc_isi_source_fmt_init(mxc_isi);
+@@ -998,6 +1024,25 @@ static int mxc_isi_config_parm(struct mxc_isi_dev *mxc_isi)
+ 		return -EINVAL;
+ 
+ 	mxc_isi_channel_init(mxc_isi);
++
++	if (mxc_isi->blending) {
++		mxc_isi_temp = mxc_isi_get_weaving_channel();
++
++		/* weaving buffer size for YUV422: width * height * bytes_per_pixel * 2 */
++		mxc_isi_temp->bld_buf_size = mxc_isi->isi_cap.src_f.o_height
++				* mxc_isi->isi_cap.src_f.o_width * 4;
++
++		mxc_isi_temp->bld_buf_vaddr = dma_alloc_coherent(&mxc_isi->pdev->dev,
++				PAGE_ALIGN(mxc_isi_temp->bld_buf_size),
++				&mxc_isi_temp->bld_buf_paddr, GFP_DMA | GFP_KERNEL);
++		if (mxc_isi_temp->bld_buf_vaddr == NULL) {
++			dev_err(&mxc_isi->pdev->dev, "No enough dma memory\n");
++			return -ENOMEM;
++		}
++
++		mxc_isi_channel_init(mxc_isi_temp);
++	}
++
+ 	mxc_isi_channel_config(mxc_isi);
+ 
+ 	return 0;
+@@ -1217,6 +1262,33 @@ static int mxc_isi_cap_s_parm(struct file *file, void *fh,
+ 	return v4l2_subdev_call(sd, video, s_parm, a);
+ }
+ 
++static int mxc_isi_cap_g_std(struct file *file, void *priv, v4l2_std_id *a)
++{
++	struct mxc_isi_dev *mxc_isi = video_drvdata(file);
++	struct v4l2_subdev *sd;
++	struct media_pad *source_pad;
++	int ret;
++
++	/* Get remote source pad */
++	source_pad = mxc_isi_get_remote_source_pad(mxc_isi);
++	if (source_pad == NULL) {
++		v4l2_err(mxc_isi->v4l2_dev, "%s, No remote pad found!\n", __func__);
++		return -EINVAL;
++	}
++
++	/* Get remote source pad subdev */
++	sd = media_entity_to_v4l2_subdev(source_pad->entity);
++	if (sd == NULL) {
++		v4l2_err(mxc_isi->v4l2_dev, "%s, No remote subdev found!\n", __func__);
++		return -EINVAL;
++	}
++
++	ret = v4l2_subdev_call(sd, video, g_std, a);
++	mxc_isi->std_id = *a;
++
++	return ret;
++}
++
+ static int mxc_isi_cap_enum_framesizes(struct file *file, void *priv,
+ 					 struct v4l2_frmsizeenum *fsize)
+ {
+@@ -1345,6 +1417,8 @@ static const struct v4l2_ioctl_ops mxc_isi_capture_ioctl_ops = {
+ 	.vidioc_g_parm			= mxc_isi_cap_g_parm,
+ 	.vidioc_s_parm			= mxc_isi_cap_s_parm,
+ 
++	.vidioc_g_std			= mxc_isi_cap_g_std,
++
+ 	.vidioc_enum_framesizes = mxc_isi_cap_enum_framesizes,
+ 	.vidioc_enum_frameintervals = mxc_isi_cap_enum_frameintervals,
+ };
+diff --git a/drivers/media/platform/imx8/mxc-isi-core.c b/drivers/media/platform/imx8/mxc-isi-core.c
+index ae9daf9d98e4..c8004468c6c6 100644
+--- a/drivers/media/platform/imx8/mxc-isi-core.c
++++ b/drivers/media/platform/imx8/mxc-isi-core.c
+@@ -25,10 +25,18 @@ static irqreturn_t mxc_isi_irq_handler(int irq, void *priv)
+ 	if (status & CHNL_STS_FRM_STRD_MASK) {
+ 		if (mxc_isi->is_m2m)
+ 			mxc_isi_m2m_frame_write_done(mxc_isi);
+-		else
++		else if (mxc_isi->frame_irq == true)
+ 			mxc_isi_cap_frame_write_done(mxc_isi);
+ 	}
+ 
++	if ((!mxc_isi->is_m2m) && ((mxc_isi->deinterlace == CHNL_IMG_CTRL_DEINT_WEAVE_ODD_EVEN) ||
++		(mxc_isi->deinterlace == CHNL_IMG_CTRL_DEINT_WEAVE_EVEN_ODD))) {
++		if (mxc_isi->frame_irq == false)
++			mxc_isi->frame_irq = true;
++		else
++			mxc_isi->frame_irq = false;
++	}
++
+ 	if (status & (CHNL_STS_AXI_WR_ERR_Y_MASK |
+ 					CHNL_STS_AXI_WR_ERR_U_MASK |
+ 					CHNL_STS_AXI_WR_ERR_V_MASK))
+@@ -102,6 +110,10 @@ static int mxc_isi_parse_dt(struct mxc_isi_dev *mxc_isi)
+ 		return ret;
+ 
+ 	mxc_isi->parallel_csi = of_property_read_bool(node, "parallel_csi");
++	of_property_read_u32(node, "deinterlace_mode", &mxc_isi->deinterlace);
++
++	mxc_isi->blending = of_property_read_bool(node, "deinterlace_blending");
++	of_property_read_u32(node, "ntsc_top", &mxc_isi->ntsc_top);
+ 
+ 	dev_dbg(dev, "%s, isi_%d,interface(%d, %d, %d)\n", __func__, mxc_isi->id,
+ 			mxc_isi->interface[0], mxc_isi->interface[1], mxc_isi->interface[2]);
+@@ -173,10 +185,15 @@ static int mxc_isi_probe(struct platform_device *pdev)
+ 		return -EINVAL;
+ 	}
+ 
+-	ret = mxc_isi_initialize_capture_subdev(mxc_isi);
+-	if (ret < 0) {
+-		dev_err(dev, "failed to init cap subdev (%d)\n", ret);
+-		return -EINVAL;
++	if (mxc_isi->deinterlace == CHNL_IMG_CTRL_DEINT_BLEND_ODD_EVEN ||
++			mxc_isi->deinterlace == CHNL_IMG_CTRL_DEINT_BLEND_EVEN_ODD) {
++		mxc_isi_set_weaving_channel(mxc_isi);
++	} else {
++		ret = mxc_isi_initialize_capture_subdev(mxc_isi);
++		if (ret < 0) {
++			dev_err(dev, "failed to init cap subdev (%d)\n", ret);
++			return -EINVAL;
++		}
+ 	}
+ 
+ 	platform_set_drvdata(pdev, mxc_isi);
+@@ -206,7 +223,11 @@ static int mxc_isi_remove(struct platform_device *pdev)
+ 	struct mxc_isi_dev *mxc_isi = platform_get_drvdata(pdev);
+ 	struct device *dev = &pdev->dev;
+ 
+-	mxc_isi_unregister_capture_subdev(mxc_isi);
++	if (mxc_isi->deinterlace == CHNL_IMG_CTRL_DEINT_BLEND_ODD_EVEN ||
++			mxc_isi->deinterlace == CHNL_IMG_CTRL_DEINT_BLEND_EVEN_ODD)
++		mxc_isi_clear_weaving_channel(mxc_isi);
++	else
++		mxc_isi_unregister_capture_subdev(mxc_isi);
+ 	pm_runtime_disable(dev);
+ 
+ 	return 0;
+diff --git a/drivers/media/platform/imx8/mxc-isi-core.h b/drivers/media/platform/imx8/mxc-isi-core.h
+index c26060c0870d..8584d2a67a49 100644
+--- a/drivers/media/platform/imx8/mxc-isi-core.h
++++ b/drivers/media/platform/imx8/mxc-isi-core.h
+@@ -308,11 +308,19 @@ struct mxc_isi_dev {
+ 	unsigned int		scale:1;
+ 	unsigned int		alphaen:1;
+ 	unsigned int		crop:1;
+-	unsigned int		deinterlace:1;
+ 	unsigned int		parallel_csi:1;
++	unsigned int		blending:1;
+ 	unsigned int		is_m2m:1;
+ 	unsigned int		is_streaming:1;
+ 
++	unsigned int		deinterlace;
++	bool			frame_irq;
++	v4l2_std_id		std_id;
++	unsigned int		ntsc_top;
++	unsigned int		bld_buf_size;
++	dma_addr_t		bld_buf_paddr;
++	void			*bld_buf_vaddr;
++
+ 	struct mxc_isi_ctrls ctrls;
+ 	u8			alpha;		/* goable alpha */
+ 	struct mxc_isi_roi_alpha alpha_roi[5];		/* ROI alpha */
+diff --git a/drivers/media/platform/imx8/mxc-isi-hw.c b/drivers/media/platform/imx8/mxc-isi-hw.c
+index f2774076d61e..e5303c5e0e1c 100644
+--- a/drivers/media/platform/imx8/mxc-isi-hw.c
++++ b/drivers/media/platform/imx8/mxc-isi-hw.c
+@@ -15,6 +15,8 @@
+ #include "mxc-isi-hw.h"
+ #define	ISI_DOWNSCALE_THRESHOLD		0x4000
+ 
++static struct mxc_isi_dev *mxc_isi_weaving;
++
+ #ifdef DEBUG
+ void dump_isi_regs(struct mxc_isi_dev *mxc_isi)
+ {
+@@ -313,6 +315,13 @@ void mxc_isi_channel_set_csc(struct mxc_isi_dev *mxc_isi)
+ 		writel(coeffs[csc][3], mxc_isi->regs + CHNL_CSC_COEFF3);
+ 		writel(coeffs[csc][4], mxc_isi->regs + CHNL_CSC_COEFF4);
+ 		writel(coeffs[csc][5], mxc_isi->regs + CHNL_CSC_COEFF5);
++	} else {
++		writel(0, mxc_isi->regs + CHNL_CSC_COEFF0);
++		writel(0, mxc_isi->regs + CHNL_CSC_COEFF1);
++		writel(0, mxc_isi->regs + CHNL_CSC_COEFF2);
++		writel(0, mxc_isi->regs + CHNL_CSC_COEFF3);
++		writel(0, mxc_isi->regs + CHNL_CSC_COEFF4);
++		writel(0, mxc_isi->regs + CHNL_CSC_COEFF5);
+ 	}
+ 
+ 	writel(val, mxc_isi->regs + CHNL_IMG_CTRL);
+@@ -353,9 +362,47 @@ void mxc_isi_channel_set_chain_buf(struct mxc_isi_dev *mxc_isi)
+ 	}
+ }
+ 
+-void mxc_isi_channel_deinterlace_init(struct mxc_isi_dev *mxc_isi)
++void mxc_isi_channel_weaving_config(struct mxc_isi_dev *mxc_isi)
+ {
+ 	/* Config for Blending deinterlace */
++	int val;
++	struct mxc_isi_frame *src_fmt = &mxc_isi->isi_cap.src_f;
++
++	mxc_isi_channel_source_config(mxc_isi_weaving);
++
++	val = MXC_ISI_OUT_FMT_YUV422_1P8P << CHNL_IMG_CTRL_FORMAT_OFFSET |
++		mxc_isi_weaving->deinterlace << CHNL_IMG_CTRL_DEINT_OFFSET |
++		CHNL_IMG_CTRL_CSC_BYPASS_ENABLE;
++	writel(val, mxc_isi_weaving->regs + CHNL_IMG_CTRL);
++
++	if (mxc_isi_weaving->ntsc_top)
++		val = src_fmt->o_width |
++			((src_fmt->o_height + mxc_isi_weaving->ntsc_top )/ 2 << CHNL_IMG_CFG_HEIGHT_OFFSET);
++	else
++		val = src_fmt->o_width | (src_fmt->o_height / 2 << CHNL_IMG_CFG_HEIGHT_OFFSET);
++	writel(val, mxc_isi_weaving->regs + CHNL_IMG_CFG);
++
++	val = mxc_isi_weaving->bld_buf_paddr;
++	writel(val, mxc_isi_weaving->regs + CHNL_IN_BUF_ADDR);
++	writel(src_fmt->o_width * 2, mxc_isi_weaving->regs + CHNL_IN_BUF_PITCH);
++
++	val = 1 << CHNL_OUT_BUF_CTRL_LOAD_BUF1_ADDR_OFFSET;
++	writel(val, mxc_isi_weaving->regs + CHNL_OUT_BUF_CTRL);
++
++	if (mxc_isi_weaving->ntsc_top) {
++		val = mxc_isi_weaving->ntsc_top / 2;
++		writel(val, mxc_isi_weaving->regs + CHNL_CROP_ULC);
++		val = ((src_fmt->o_width - 1) << 16) |
++			((src_fmt->o_height + mxc_isi_weaving->ntsc_top) / 2 - 1);
++		writel(val, mxc_isi_weaving->regs + CHNL_CROP_LRC);
++		val = readl(mxc_isi_weaving->regs + CHNL_IMG_CTRL);
++		val &= ~CHNL_IMG_CTRL_CROP_EN_MASK;
++		val |= (CHNL_IMG_CTRL_CROP_EN_ENABLE << CHNL_IMG_CTRL_CROP_EN_OFFSET);
++		writel(val, mxc_isi_weaving->regs + CHNL_IMG_CTRL);
++	}
++
++	val = src_fmt->o_width | (src_fmt->o_height << CHNL_IMG_CFG_HEIGHT_OFFSET);
++	writel(val, mxc_isi_weaving->regs + CHNL_SCL_IMG_CFG);
+ }
+ 
+ void mxc_isi_channel_set_deinterlace(struct mxc_isi_dev *mxc_isi)
+@@ -365,18 +412,31 @@ void mxc_isi_channel_set_deinterlace(struct mxc_isi_dev *mxc_isi)
+ 	 * Line Doubling-------No
+ 	 * Blending -----------TODO*/
+ 	u32 val;
++	struct mxc_isi_frame *src_fmt = &mxc_isi->isi_cap.src_f;
+ 
+ 	val = readl(mxc_isi->regs + CHNL_IMG_CTRL);
+ 	val &= ~CHNL_IMG_CTRL_DEINT_MASK;
+ 	if (mxc_isi->deinterlace)
+ 		val |= mxc_isi->deinterlace << CHNL_IMG_CTRL_DEINT_OFFSET;
+-	if (mxc_isi->deinterlace == CHNL_IMG_CTRL_DEINT_LDOUBLE_ODD_EVEN ||
+-			mxc_isi->deinterlace == CHNL_IMG_CTRL_DEINT_LDOUBLE_EVEN_ODD)
+-		mxc_isi_channel_deinterlace_init(mxc_isi);
++	if (mxc_isi->blending) {
++		mxc_isi_channel_weaving_config(mxc_isi);
++		return;
++	}
+ 
+ 	writel(val, mxc_isi->regs + CHNL_IMG_CTRL);
+-}
+ 
++	if (mxc_isi->ntsc_top) {
++		val = mxc_isi->ntsc_top / 2;
++		writel(val, mxc_isi->regs + CHNL_CROP_ULC);
++		val = ((src_fmt->o_width - 1) << 16) |
++			((src_fmt->o_height + mxc_isi->ntsc_top) / 2 - 1);
++		writel(val, mxc_isi->regs + CHNL_CROP_LRC);
++		val = readl(mxc_isi->regs + CHNL_IMG_CTRL);
++		val &= ~CHNL_IMG_CTRL_CROP_EN_MASK;
++		val |= (CHNL_IMG_CTRL_CROP_EN_ENABLE << CHNL_IMG_CTRL_CROP_EN_OFFSET);
++		writel(val, mxc_isi->regs + CHNL_IMG_CTRL);
++	}
++}
+ 
+ void mxc_isi_channel_set_crop(struct mxc_isi_dev *mxc_isi)
+ {
+@@ -420,6 +480,21 @@ void mxc_isi_channel_set_crop(struct mxc_isi_dev *mxc_isi)
+ 	writel(val, mxc_isi->regs + CHNL_IMG_CTRL);
+ }
+ 
++void mxc_isi_set_weaving_channel(struct mxc_isi_dev *mxc_isi)
++{
++	mxc_isi_weaving = mxc_isi;
++}
++
++struct mxc_isi_dev *mxc_isi_get_weaving_channel(void)
++{
++	return mxc_isi_weaving;
++}
++
++void mxc_isi_clear_weaving_channel(struct mxc_isi_dev *mxc_isi)
++{
++	mxc_isi_weaving = NULL;
++}
++
+ static void mxc_isi_channel_clear_scaling(struct mxc_isi_dev *mxc_isi)
+ {
+ 	u32 val0;
+@@ -529,6 +604,13 @@ void mxc_isi_channel_init(struct mxc_isi_dev *mxc_isi)
+ 	val = readl(mxc_isi->regs + CHNL_CTRL);
+ 	val |= (CHNL_CTRL_CLK_EN_ENABLE << CHNL_CTRL_CLK_EN_OFFSET);
+ 	writel(val, mxc_isi->regs + CHNL_CTRL);
++
++	if ((!mxc_isi->is_m2m) && ((mxc_isi->deinterlace == CHNL_IMG_CTRL_DEINT_WEAVE_ODD_EVEN) ||
++		(mxc_isi->deinterlace == CHNL_IMG_CTRL_DEINT_WEAVE_EVEN_ODD))) {
++		mxc_isi->frame_irq = false;
++	} else {
++		mxc_isi->frame_irq = true;
++	}
+ }
+ 
+ void mxc_isi_channel_deinit(struct mxc_isi_dev *mxc_isi)
+@@ -553,8 +635,15 @@ void mxc_isi_channel_config(struct mxc_isi_dev *mxc_isi)
+ 	chain_buf(mxc_isi);
+ 
+ 	/* config output frame size and format */
+-	val = src_f->o_width | (src_f->o_height << CHNL_IMG_CFG_HEIGHT_OFFSET);
+-	writel(val, mxc_isi->regs + CHNL_IMG_CFG);
++	if ((mxc_isi->deinterlace == CHNL_IMG_CTRL_DEINT_WEAVE_ODD_EVEN) ||
++		(mxc_isi->deinterlace == CHNL_IMG_CTRL_DEINT_WEAVE_EVEN_ODD)) {
++		val = src_f->o_width | (((src_f->o_height + 1) / 2) << CHNL_IMG_CFG_HEIGHT_OFFSET);
++	} else {
++		val = src_f->o_width | (src_f->o_height << CHNL_IMG_CFG_HEIGHT_OFFSET);
++	}
++	writel(val + ((mxc_isi->ntsc_top / 2) << CHNL_IMG_CFG_HEIGHT_OFFSET), mxc_isi->regs + CHNL_IMG_CFG);
++
++	mxc_isi_channel_set_deinterlace(mxc_isi);
+ 
+ 	/* scale size need to equal input size when scaling disabled*/
+ 	writel(val, mxc_isi->regs + CHNL_SCL_IMG_CFG);
+@@ -580,6 +669,34 @@ void mxc_isi_channel_config(struct mxc_isi_dev *mxc_isi)
+ 	mxc_isi_channel_set_crop(mxc_isi);
+ #endif
+ 
++	if (mxc_isi->blending) {
++		val = MXC_ISI_M2M_IN_FMT_YUV422_1P8P << CHNL_MEM_RD_CTRL_IMG_TYPE_OFFSET;
++		writel(val, mxc_isi->regs + CHNL_MEM_RD_CTRL);
++
++		val = mxc_isi_weaving->bld_buf_paddr;
++		writel(val, mxc_isi->regs + CHNL_IN_BUF_ADDR);
++		val = dst_f->bytesperline[0];
++		writel(src_f->o_width * 2, mxc_isi->regs + CHNL_IN_BUF_PITCH);
++		writel(0xd0000000, mxc_isi->regs + CHNL_MEM_RD_CTRL);
++		val = src_f->o_width | (src_f->o_height << CHNL_IMG_CFG_HEIGHT_OFFSET);
++		writel(val, mxc_isi->regs + CHNL_SCL_IMG_CFG);
++
++		val = readl(mxc_isi->regs + CHNL_CTRL);
++		val |= 1 << CHNL_CTRL_SRC_TYPE_OFFSET;
++		val &= ~CHNL_CTRL_SRC_INPUT_MASK;
++		val |= CHNL_CTRL_SRC_INPUT_MEMORY;
++		val &= ~(1 << CHNL_CTRL_CHNL_BYPASS_OFFSET);
++		writel(val, mxc_isi->regs + CHNL_CTRL);
++		mxc_isi->scale = 1;
++
++		val = readl(mxc_isi->regs + CHNL_IMG_CTRL);
++		val |= 1 << CHNL_IMG_CTRL_YCBCR_MODE_OFFSET;
++		writel(val, mxc_isi->regs + CHNL_IMG_CTRL);
++
++		val = 0x800 << CHNL_SCALE_OFFSET_Y_SCALE_OFFSET;
++		writel(val, mxc_isi->regs + CHNL_SCALE_OFFSET);
++	}
++
+ 	val = readl(mxc_isi->regs + CHNL_CTRL);
+ 	val &= ~CHNL_CTRL_CHNL_BYPASS_MASK;
+ 
+@@ -608,6 +725,13 @@ void mxc_isi_channel_enable(struct mxc_isi_dev *mxc_isi)
+ 	val |= 0xff << CHNL_CTRL_BLANK_PXL_OFFSET;
+ 	writel(val, mxc_isi->regs + CHNL_CTRL);
+ 
++	if (mxc_isi->blending) {
++		val = readl(mxc_isi_weaving->regs + CHNL_CTRL);
++		val |= (CHNL_CTRL_CHNL_EN_ENABLE << CHNL_CTRL_CHNL_EN_OFFSET);
++		val |= 0xff << CHNL_CTRL_BLANK_PXL_OFFSET;
++		writel(val, mxc_isi_weaving->regs + CHNL_CTRL);
++	}
++
+ 	mxc_isi_clean_registers(mxc_isi);
+ 	mxc_isi_enable_irq(mxc_isi);
+ 
+@@ -617,6 +741,9 @@ void mxc_isi_channel_enable(struct mxc_isi_dev *mxc_isi)
+ 		msleep(250);
+ 
+ 	dump_isi_regs(mxc_isi);
++
++	if (mxc_isi->blending)
++		dump_isi_regs(mxc_isi_weaving);
+ }
+ 
+ void mxc_isi_channel_disable(struct mxc_isi_dev *mxc_isi)
+@@ -630,6 +757,14 @@ void mxc_isi_channel_disable(struct mxc_isi_dev *mxc_isi)
+ 	val |= (CHNL_CTRL_CHNL_EN_DISABLE << CHNL_CTRL_CHNL_EN_OFFSET);
+ 	val |= (CHNL_CTRL_CLK_EN_DISABLE << CHNL_CTRL_CLK_EN_OFFSET);
+ 	writel(val, mxc_isi->regs + CHNL_CTRL);
++
++	if (mxc_isi->blending) {
++		val = readl(mxc_isi_weaving->regs + CHNL_CTRL);
++		val &= ~(CHNL_CTRL_CHNL_EN_MASK | CHNL_CTRL_CLK_EN_MASK);
++		val |= (CHNL_CTRL_CHNL_EN_DISABLE << CHNL_CTRL_CHNL_EN_OFFSET);
++		val |= (CHNL_CTRL_CLK_EN_DISABLE << CHNL_CTRL_CLK_EN_OFFSET);
++		writel(val, mxc_isi_weaving->regs + CHNL_CTRL);
++	}
+ }
+ 
+ void  mxc_isi_enable_irq(struct mxc_isi_dev *mxc_isi)
+diff --git a/drivers/media/platform/imx8/mxc-isi-hw.h b/drivers/media/platform/imx8/mxc-isi-hw.h
+index 30010cbc5345..f67de78b7d51 100644
+--- a/drivers/media/platform/imx8/mxc-isi-hw.h
++++ b/drivers/media/platform/imx8/mxc-isi-hw.h
+@@ -503,5 +503,9 @@ void mxc_isi_channel_set_m2m_out_addr(struct mxc_isi_dev *mxc_isi,
+ void mxc_isi_channel_set_m2m_src_addr(struct mxc_isi_dev *mxc_isi,
+ 			struct mxc_isi_buffer *buf);
+ 
++void mxc_isi_set_weaving_channel(struct mxc_isi_dev *mxc_isi);
++struct mxc_isi_dev *mxc_isi_get_weaving_channel(void);
++void mxc_isi_clear_weaving_channel(struct mxc_isi_dev *mxc_isi);
++
+ void dump_isi_regs(struct mxc_isi_dev *mxc_isi);
+ #endif /* MXC_ISI_HW_H_ */
+diff --git a/drivers/media/platform/imx8/mxc-media-dev.c b/drivers/media/platform/imx8/mxc-media-dev.c
+index b3300ad8eb0f..1c96ff0a5528 100644
+--- a/drivers/media/platform/imx8/mxc-media-dev.c
++++ b/drivers/media/platform/imx8/mxc-media-dev.c
+@@ -418,12 +418,16 @@ static int register_sensor_entities(struct mxc_md *mxc_md)
+ static int register_isi_entity(struct mxc_md *mxc_md, struct mxc_isi_dev *mxc_isi)
+ {
+ 	struct v4l2_subdev *sd = &mxc_isi->isi_cap.sd;
+-	int ret;
++	int ret = 0;
+ 
+ 	dev_dbg(&mxc_md->pdev->dev, "%s\n", __func__);
+ 	if (WARN_ON(mxc_isi->id >= MXC_ISI_MAX_DEVS))
+ 		return -EBUSY;
+ 
++	if ((mxc_isi->deinterlace == CHNL_IMG_CTRL_DEINT_BLEND_ODD_EVEN)
++			|| (mxc_isi->deinterlace == CHNL_IMG_CTRL_DEINT_BLEND_EVEN_ODD))
++		return ret;
++
+ 	sd->grp_id = GRP_ID_MXC_ISI;
+ 
+ 	ret = v4l2_device_register_subdev(&mxc_md->v4l2_dev, sd);
+diff --git a/drivers/media/platform/imx8/mxc-mipi-csi2.c b/drivers/media/platform/imx8/mxc-mipi-csi2.c
+index aaa0e638800a..4c98c4f1b7eb 100644
+--- a/drivers/media/platform/imx8/mxc-mipi-csi2.c
++++ b/drivers/media/platform/imx8/mxc-mipi-csi2.c
+@@ -205,6 +205,17 @@ static void mxc_mipi_csi2_csr_config(struct mxc_mipi_csi2_dev *csi2dev)
+ 	val = 0;
+ 	writel(val, csi2dev->csr_regs + CSI2SS_DATA_TYPE);
+ 
++	if (csi2dev->tvdec == V4L2_FIELD_INTERLACED) {
++		if (csi2dev->vchannel == true)
++			val = (CSI2SS_VC_INTERLACED_VC0 |
++				CSI2SS_VC_INTERLACED_VC1 |
++				CSI2SS_VC_INTERLACED_VC2 |
++				CSI2SS_VC_INTERLACED_VC3);
++		else
++			val = CSI2SS_VC_INTERLACED_VC0;
++		writel(val, csi2dev->csr_regs + CSI2SS_VC_INTERLACED);
++       }
++
+ 	/* polarity */
+ 	val = readl(csi2dev->csr_regs + CSI2SS_PLM_CTRL);
+ 	val &= ~(CSI2SS_PLM_CTRL_VSYNC_OVERRIDE |
+@@ -321,6 +332,8 @@ static int mxc_csi2_get_sensor_fmt(struct mxc_mipi_csi2_dev *csi2dev)
+ 			csi2dev->hs_settle = rxhs_settle[1];
+ 	}
+ 
++	csi2dev->tvdec = mf->field;
++
+ 	return 0;
+ }
+ 
+@@ -502,6 +515,37 @@ static int mipi_csi2_g_parm(struct v4l2_subdev *sd, struct v4l2_streamparm *a)
+ 	return v4l2_subdev_call(sen_sd, video, g_parm, a);
+ }
+ 
++static int mipi_csi2_g_std(struct v4l2_subdev *sd, v4l2_std_id *a)
++{
++	struct mxc_mipi_csi2_dev *csi2dev = sd_to_mxc_mipi_csi2_dev(sd);
++	struct media_pad *source_pad;
++	struct v4l2_subdev *sen_sd;
++	int ret;
++
++	/* Get remote source pad */
++	source_pad = mxc_csi2_get_remote_sensor_pad(csi2dev);
++	if (source_pad == NULL) {
++		v4l2_err(&csi2dev->v4l2_dev, "%s, No remote pad found!\n", __func__);
++		return -EINVAL;
++	}
++
++	/* Get remote source pad subdev */
++	sen_sd = media_entity_to_v4l2_subdev(source_pad->entity);
++	if (sen_sd == NULL) {
++		v4l2_err(&csi2dev->v4l2_dev, "%s, No remote subdev found!\n", __func__);
++		return -EINVAL;
++	}
++
++	ret = v4l2_subdev_call(sen_sd, video, g_std, a);
++	if (ret < 0 && ret != -ENOIOCTLCMD) {
++		v4l2_err(&csi2dev->v4l2_dev, "%s, get remote std faile!\n", __func__);
++		return -EINVAL;
++	}
++	csi2dev->norm = *a;
++
++	return 0;
++}
++
+ static int mipi_csi2_s_stream(struct v4l2_subdev *sd, int enable)
+ {
+ 	struct mxc_mipi_csi2_dev *csi2dev = sd_to_mxc_mipi_csi2_dev(sd);
+@@ -648,6 +692,7 @@ static struct v4l2_subdev_core_ops mipi_csi2_core_ops = {
+ static struct v4l2_subdev_video_ops mipi_csi2_video_ops = {
+ 	.s_parm = mipi_csi2_s_parm,
+ 	.g_parm = mipi_csi2_g_parm,
++	.g_std = mipi_csi2_g_std,
+ 	.s_stream = mipi_csi2_s_stream,
+ };
+ 
+diff --git a/drivers/media/platform/imx8/mxc-mipi-csi2.h b/drivers/media/platform/imx8/mxc-mipi-csi2.h
+index ed01adc1958b..b488388c72a3 100644
+--- a/drivers/media/platform/imx8/mxc-mipi-csi2.h
++++ b/drivers/media/platform/imx8/mxc-mipi-csi2.h
+@@ -261,6 +261,9 @@ struct mxc_mipi_csi2_dev {
+ 
+ 	struct mutex lock;
+ 
++	v4l2_std_id norm;
++	u8 tvdec;
++
+ 	int	 id;
+ 	u32 hs_settle;
+ 	u32 send_level;
+diff --git a/drivers/media/platform/imx8/mxc-parallel-csi.c b/drivers/media/platform/imx8/mxc-parallel-csi.c
+index afefdd54db08..de0f5fa1154d 100644
+--- a/drivers/media/platform/imx8/mxc-parallel-csi.c
++++ b/drivers/media/platform/imx8/mxc-parallel-csi.c
+@@ -158,24 +158,56 @@ static void mxc_pcsi_csr_config(struct mxc_parallel_csi_dev *pcsidev)
+ 	val = IF_CTRL_REG_PL_VALID;
+ 	writel(val , pcsidev->csr_regs + IF_CTRL_REG_SET);
+ 
+-	/* Config CTRL REG */
+-	val = readl(pcsidev->csr_regs + CSI_CTRL_REG);
+-	val |= (
+-		CSI_CTRL_REG_DATA_TYPE_IN(DATA_TYPE_IN_YVYU_8BITS) |
+-		CSI_CTRL_REG_HSYNC_POL |
+-		CSI_CTRL_REG_MASK_VSYNC_COUNTER(3) |
+-		CSI_CTRL_REG_HSYNC_PULSE(2));
+-
+-	if (pcsidev->uv_swap)
+-		val |= CSI_CTRL_REG_UV_SWAP_EN;
+-
+-	if (pcsidev->mode & GATE_CLOCK_MODE)
+-		val |= CSI_CTRL_REG_GCLK_MODE_EN;
+-	else if (pcsidev->mode & CCIR_MODE) {
+-		val |= (CSI_CTRL_REG_CCIR_EN |
++	if (pcsidev->tvdec == V4L2_FIELD_NONE) {
++		/* Config CTRL REG */
++		val = readl(pcsidev->csr_regs + CSI_CTRL_REG);
++		val |= (
++			CSI_CTRL_REG_DATA_TYPE_IN(DATA_TYPE_IN_YVYU_8BITS) |
++			CSI_CTRL_REG_HSYNC_POL |
++			CSI_CTRL_REG_MASK_VSYNC_COUNTER(3) |
++			CSI_CTRL_REG_HSYNC_PULSE(2));
++
++		if (pcsidev->uv_swap)
++			val |= CSI_CTRL_REG_UV_SWAP_EN;
++
++		if (pcsidev->mode & GATE_CLOCK_MODE)
++			val |= CSI_CTRL_REG_GCLK_MODE_EN;
++		else if (pcsidev->mode & CCIR_MODE) {
++			val |= (CSI_CTRL_REG_CCIR_EN |
++				CSI_CTRL_REG_CCIR_VSYNC_RESET_EN |
++				CSI_CTRL_REG_CCIR_EXT_VSYNC_EN |
++				CSI_CTRL_REG_CCIR_ECC_ERR_CORRECT_EN);
++		}
++	} else if (pcsidev->tvdec == V4L2_FIELD_INTERLACED) {
++		val = CSI_CTRL_REG_DATA_TYPE_IN(DATA_TYPE_IN_UYVY_BT656_8BITS) |
++			CSI_CTRL_REG_MASK_VSYNC_COUNTER(3) |
++			CSI_CTRL_REG_CCIR_EN |
++			CSI_CTRL_REG_CCIR_VIDEO_MODE;
++
++		if (pcsidev->uv_swap)
++			val |= CSI_CTRL_REG_UV_SWAP_EN;
++
++		if (pcsidev->mode & GATE_CLOCK_MODE)
++			val |= CSI_CTRL_REG_GCLK_MODE_EN;
++
++		if (pcsidev->norm == V4L2_STD_NTSC)
++			val |= CSI_CTRL_REG_CCIR_NTSC_EN;
++	} else if (pcsidev->tvdec == V4L2_FIELD_SEQ_TB) {
++		val = CSI_CTRL_REG_DATA_TYPE_IN(DATA_TYPE_IN_UYVY_BT656_8BITS) |
++			CSI_CTRL_REG_MASK_VSYNC_COUNTER(3) |
++			CSI_CTRL_REG_CCIR_EN;
++
++		if (pcsidev->uv_swap)
++			val |= CSI_CTRL_REG_UV_SWAP_EN;
++
++		if (pcsidev->mode & GATE_CLOCK_MODE)
++			val |= CSI_CTRL_REG_GCLK_MODE_EN;
++
++		val |= (CSI_CTRL_REG_CCIR_EXT_VSYNC_EN |
+ 			CSI_CTRL_REG_CCIR_VSYNC_RESET_EN |
+-			CSI_CTRL_REG_CCIR_EXT_VSYNC_EN |
+ 			CSI_CTRL_REG_CCIR_ECC_ERR_CORRECT_EN);
++	} else {
++		;/* to do */
+ 	}
+ 
+ 	writel(val, pcsidev->csr_regs + CSI_CTRL_REG);
+@@ -286,9 +318,11 @@ static int mxc_pcsi_get_sensor_fmt(struct mxc_parallel_csi_dev *pcsidev)
+ 	/* Update input frame size and formate  */
+ 	memcpy(mf, &src_fmt.format, sizeof(struct v4l2_mbus_framefmt));
+ 
+-	if (mf->code == MEDIA_BUS_FMT_YUYV8_2X8)
++	if ((mf->code == MEDIA_BUS_FMT_YUYV8_2X8) || (mf->code == MEDIA_BUS_FMT_UYVY8_2X8))
+ 		pcsidev->uv_swap = 1;
+ 
++	pcsidev->tvdec = mf->field;
++
+ 	dev_dbg(&pcsidev->pdev->dev, "width=%d, height=%d, fmt.code=0x%x\n", mf->width, mf->height, mf->code);
+ 
+ 	return 0;
+@@ -458,6 +492,37 @@ static int mxc_pcsi_g_parm(struct v4l2_subdev *sd, struct v4l2_streamparm *a)
+ 	return v4l2_subdev_call(sen_sd, video, g_parm, a);
+ }
+ 
++static int mxc_pcsi_g_std(struct v4l2_subdev *sd, v4l2_std_id *a)
++{
++	struct mxc_parallel_csi_dev *pcsidev = sd_to_mxc_pcsi_dev(sd);
++	struct media_pad *source_pad;
++	struct v4l2_subdev *sen_sd;
++	int ret;
++
++	/* Get remote source pad */
++	source_pad = mxc_pcsi_get_remote_sensor_pad(pcsidev);
++	if (source_pad == NULL) {
++		v4l2_err(&pcsidev->v4l2_dev, "%s, No remote pad found!\n", __func__);
++		return -EINVAL;
++	}
++
++	/* Get remote source pad subdev */
++	sen_sd = media_entity_to_v4l2_subdev(source_pad->entity);
++	if (sen_sd == NULL) {
++		v4l2_err(&pcsidev->v4l2_dev, "%s, No remote subdev found!\n", __func__);
++		return -EINVAL;
++	}
++
++	ret = v4l2_subdev_call(sen_sd, video, g_std, a);
++	if (ret < 0 && ret != -ENOIOCTLCMD) {
++		v4l2_err(&pcsidev->v4l2_dev, "%s, get remote std faile!\n", __func__);
++		return -EINVAL;
++	}
++	pcsidev->norm = *a;
++
++	return 0;
++}
++
+ static int mxc_pcsi_s_stream(struct v4l2_subdev *sd, int enable)
+ {
+ 	struct mxc_parallel_csi_dev *pcsidev = sd_to_mxc_pcsi_dev(sd);
+@@ -526,6 +591,7 @@ static struct v4l2_subdev_core_ops pcsi_core_ops = {
+ static struct v4l2_subdev_video_ops pcsi_video_ops = {
+ 	.s_parm = mxc_pcsi_s_parm,
+ 	.g_parm = mxc_pcsi_g_parm,
++	.g_std = mxc_pcsi_g_std,
+ 	.s_stream = mxc_pcsi_s_stream,
+ };
+ 
+diff --git a/drivers/media/platform/imx8/mxc-parallel-csi.h b/drivers/media/platform/imx8/mxc-parallel-csi.h
+index 49b1fbfab07a..2c0322d78c18 100644
+--- a/drivers/media/platform/imx8/mxc-parallel-csi.h
++++ b/drivers/media/platform/imx8/mxc-parallel-csi.h
+@@ -157,6 +157,8 @@ struct mxc_parallel_csi_dev {
+ 
+ 	struct mutex lock;
+ 
++	v4l2_std_id norm;
++
+ 	u8 running;
+ 	u8 mode;
+ 	u8 uv_swap;
+-- 
+2.21.0
+

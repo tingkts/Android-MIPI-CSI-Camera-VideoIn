@@ -1,0 +1,252 @@
+From 7bc401a9f6c64281cd3b67b66c84e3b698a3e8ad Mon Sep 17 00:00:00 2001
+From: tingsung <tingsung@msi.com>
+Date: Tue, 8 Oct 2019 17:53:57 +0800
+Subject: [PATCH] porting ov5640
+
+---
+ .../boot/dts/freescale/msi-imx8qm-ms5765.dtsi | 149 ++----------------
+ 1 file changed, 13 insertions(+), 136 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/freescale/msi-imx8qm-ms5765.dtsi b/arch/arm64/boot/dts/freescale/msi-imx8qm-ms5765.dtsi
+index e8f8f29a9733..229c76d69db1 100755
+--- a/arch/arm64/boot/dts/freescale/msi-imx8qm-ms5765.dtsi
++++ b/arch/arm64/boot/dts/freescale/msi-imx8qm-ms5765.dtsi
+@@ -242,7 +242,7 @@
+ 			regulator-max-microvolt = <3300000>;
+ 			regulator-always-on;
+ 		};
+-				
++
+ 		//Add for audio AMP_SDn by fred +++
+ 		reg_audio1: wm8960_supply {
+                         compatible = "regulator-fixed";
+@@ -430,7 +430,7 @@
+ 	imx8qm-mek {
+ 		pinctrl_hog: hoggrp {
+ 			fsl,pins = <															//  Function	I	/O			Active
+-				/*														
++				/*
+ //				SC_P_SCU_GPIO0_00_LSIO_GPIO0_IO28					0x0600004c		//  BD_REV0			Input		N/A
+ 				SC_P_SCU_GPIO0_01_LSIO_GPIO0_IO29					0x0600004c		//  BD_REV1			Input		N/A
+ 				SC_P_SCU_GPIO0_02_LSIO_GPIO0_IO30					0x0600004c		//  BD_REV2			Input		N/A
+@@ -610,7 +610,7 @@
+ 				SC_P_ESAI0_TX1_LSIO_GPIO2_IO27						0x00000021		// TOUCH_POWER_EN
+ 			>;
+ 		};
+-	
++
+ 		//Add by fred+++
+ 		pinctrl_wm8960pwr: wm8960pwr_grp {
+ 			fsl,pins = <
+@@ -1210,7 +1210,7 @@
+ 			label = "u-boot";
+ 			reg = <0x000000 0x1fb000>;
+ 		};
+-		
++
+ 		partition@1fc000 {
+ 			label = "misc";
+ 			reg = <0x1fb000 0x5000>;
+@@ -1355,7 +1355,7 @@
+ 	};
+ 
+ 	exrtc: m41t81@68 {
+-		compatible = "st,m41t81s";  
++		compatible = "st,m41t81s";
+ 		reg = <0x68>;
+ 	};
+ 
+@@ -1394,51 +1394,13 @@
+ 	clock-frequency = <100000>;
+ 	pinctrl-names = "default";
+ 	pinctrl-0 = <&pinctrl_mipi_csi1_i2c0>;
+-	status = "okay";
++	status = "disabled";
+ 
+ 	tw9992_mipi@88 {
+ 		status = "disabled";
+ 	};
+ };
+ 
+-/*
+-&i2c0_cm41 {
+-	#address-cells = <1>;
+-	#size-cells = <0>;
+-	clock-frequency = <100000>;
+-	pinctrl-names = "default";
+-	pinctrl-0 = <&pinctrl_cm41_i2c0>;
+-	status = "okay";
+-
+-	pca6416: gpio@20 {
+-		compatible = "ti,tca6416";
+-		reg = <0x20>;
+-		gpio-controller;
+-		#gpio-cells = <2>;
+-	};
+-
+-	cs42888: cs42888@48 {
+-		compatible = "cirrus,cs42888";
+-		reg = <0x48>;
+-		clocks = <&clk IMX8QM_AUD_MCLKOUT0>;
+-		clock-names = "mclk";
+-		VA-supply = <&reg_audio>;
+-		VD-supply = <&reg_audio>;
+-		VLS-supply = <&reg_audio>;
+-		VLC-supply = <&reg_audio>;
+-		reset-gpio = <&gpio4 25 1>;
+-		power-domains = <&pd_mclk_out0>;
+-		assigned-clocks = <&clk IMX8QM_AUD_PLL0_DIV>,
+-				<&clk IMX8QM_AUD_ACM_AUD_PLL_CLK0_DIV>,
+-				<&clk IMX8QM_AUD_ACM_AUD_REC_CLK0_DIV>,
+-				<&clk IMX8QM_AUD_MCLKOUT0>;
+-		assigned-clock-rates = <786432000>, <49152000>, <12288000>, <12288000>;
+-		fsl,txs-rxm;
+-		status = "okay";
+-	};
+-};
+-*/
+-
+ &pd_dma_lpuart0 {
+ 	debug_console;
+ };
+@@ -1655,40 +1617,6 @@
+ 	};
+ };
+ 
+-#if 0
+-&mipi_csi_0 {
+-	#address-cells = <1>;
+-	#size-cells = <0>;
+-	virtual-channel;
+-	status = "okay";
+-
+-	/* Camera 0  MIPI CSI-2 (CSIS0) */
+-	port@0 {
+-		reg = <0>;
+-		mipi_csi0_ep: endpoint {
+-			remote-endpoint = <&max9286_0_ep>;
+-			data-lanes = <1 2 3 4>;
+-		};
+-	};
+-};
+-
+-&mipi_csi_1 {
+-	#address-cells = <1>;
+-	#size-cells = <0>;
+-	virtual-channel;
+-	status = "okay";
+-
+-	/* Camera 0 MIPI CSI-2 (CSIS1) */
+-	port@1 {
+-		reg = <1>;
+-		mipi_csi1_ep: endpoint {
+-			remote-endpoint = <&max9286_1_ep>;
+-			data-lanes = <1 2 3 4>;
+-		};
+-	};
+-};
+-#endif
+-
+ &mlb {
+ 	pinctrl-names = "default";
+ 	pinctrl-0 = <&pinctrl_mlb>;
+@@ -1699,89 +1627,38 @@
+ 	status = "okay";
+ };
+ 
+-&i2c0_mipi_csi0 {
+-	#address-cells = <1>;
+-	#size-cells = <0>;
+-	clock-frequency = <100000>;
+-	status = "okay";
+-/*
+-	max9286_mipi@6A	 {
+-		compatible = "maxim,max9286_mipi";
+-		reg = <0x6A>;
+-		pinctrl-names = "default";
+-		clocks = <&clk IMX8QM_CLK_DUMMY>;
+-		clock-names = "capture_mclk";
+-		mclk = <27000000>;
+-		mclk_source = <0>;
+-		pwn-gpios = <&gpio1 27 GPIO_ACTIVE_HIGH>;
+-		virtual-channel;
+-		port {
+-			max9286_0_ep: endpoint {
+-			remote-endpoint = <&mipi_csi0_ep>;
+-			data-lanes = <1 2 3 4>;
+-			};
+-		};
+-	};
+-*/
+-};
+ 
+-&i2c0_mipi_csi1 {
+-	#address-cells = <1>;
+-	#size-cells = <0>;
+-	clock-frequency = <100000>;
+-	status = "okay";
+-/*
+-	max9286_mipi@6A	 {
+-		compatible = "maxim,max9286_mipi";
+-		reg = <0x6A>;
+-		pinctrl-names = "default";
+-		pinctrl-0 = <&pinctrl_mipi_csi1_en_rst>;
+-		clocks = <&clk IMX8QM_CLK_DUMMY>;
+-		clock-names = "capture_mclk";
+-		mclk = <27000000>;
+-		mclk_source = <0>;
+-		pwn-gpios = <&gpio1 30 GPIO_ACTIVE_HIGH>;
+-		virtual-channel;
+-		port {
+-			max9286_1_ep: endpoint {
+-			remote-endpoint = <&mipi_csi1_ep>;
+-			data-lanes = <1 2 3 4>;
+-			};
+-		};
+-	};
+-*/
+-};
+ 
+ &isi_0 {
+ 	status = "okay";
+ };
+ 
+ &isi_1 {
+-	status = "okay";
++	status = "disabled";
+ };
+ 
+ &isi_2 {
+-	status = "okay";
++	status = "disabled";
+ };
+ 
+ &isi_3 {
+-	status = "okay";
++	status = "disabled";
+ };
+ 
+ &isi_4 {
+-	status = "okay";
++	status = "disabled";
+ };
+ 
+ &isi_5 {
+-	status = "okay";
++	status = "disabled";
+ };
+ 
+ &isi_6 {
+-	status = "okay";
++	status = "disabled";
+ };
+ 
+ &isi_7 {
+-	status = "okay";
++	status = "disabled";
+ };
+ 
+ &sata {
+-- 
+2.21.0
+

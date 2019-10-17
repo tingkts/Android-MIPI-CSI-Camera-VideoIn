@@ -1,0 +1,212 @@
+From 62ef300be369b960d36ca9c49c607014d74fe9d5 Mon Sep 17 00:00:00 2001
+From: tingsung <tingsung@msi.com>
+Date: Fri, 17 Jan 2020 16:37:16 +0800
+Subject: [PATCH 3/3] tw9992_mipi driver (cont.)
+
+  implement s_std & change V4L2_FIELD_INTERLACED_TB to V4L2_FIELD_INTERLACED
+---
+ drivers/media/platform/imx8/tw9992_mipi.c | 70 +++++++++++++++++------
+ 1 file changed, 51 insertions(+), 19 deletions(-)
+
+diff --git a/drivers/media/platform/imx8/tw9992_mipi.c b/drivers/media/platform/imx8/tw9992_mipi.c
+index 0c46252eb467..e4545729cce9 100644
+--- a/drivers/media/platform/imx8/tw9992_mipi.c
++++ b/drivers/media/platform/imx8/tw9992_mipi.c
+@@ -664,7 +664,7 @@ static int tw9992_g_parm(struct v4l2_subdev *sd, struct v4l2_streamparm *a)
+         break;
+ 
+     default:
+-        pr_debug("ioctl_g_parm:type is unknown %d\n", a->type);
++        pr_debug("%s#%d: type is unknown %d\n", __func__, __LINE__, a->type);
+         ret = -EINVAL;
+         break;
+     }
+@@ -691,13 +691,13 @@ static int tw9992_s_parm(struct v4l2_subdev *sd, struct v4l2_streamparm *stream)
+ 	    case V4L2_BUF_TYPE_VBI_OUTPUT:
+ 	    case V4L2_BUF_TYPE_SLICED_VBI_CAPTURE:
+ 	    case V4L2_BUF_TYPE_SLICED_VBI_OUTPUT:
+-		    pr_debug("   type is not " \
+-			    "V4L2_BUF_TYPE_VIDEO_CAPTURE but %d\n",
++		    pr_debug("%s#%d:   type is not " \
++			    "V4L2_BUF_TYPE_VIDEO_CAPTURE but %d\n", __func__, __LINE__,
+ 			    stream->type);
+ 		    ret = -EINVAL;
+ 		    break;
+ 	    default:
+-		    pr_debug("   type is unknown - %d\n", stream->type);
++		    pr_debug("%s#%d:   type is unknown - %d\n", __func__, __LINE__, stream->type);
+ 		    ret = -EINVAL;
+ 		    break;
+ 	    }
+@@ -721,7 +721,7 @@ static int tw9992_s_parm(struct v4l2_subdev *sd, struct v4l2_streamparm *stream)
+     && stream->parm.raw_data[102]=='9'
+     && stream->parm.raw_data[103]=='2'
+     ) {
+-        pr_err("9992 raw_data[]\n");
++        pr_err("tw9992 raw_data[]\n");
+         sensor->is_mipi = 1;  /* of course ! */
+         /* what do you want to change ? */
+         /* update chip register !!! */
+@@ -766,11 +766,13 @@ static int tw9992_g_std(struct v4l2_subdev *sd, v4l2_std_id *std) {
+     mutex_lock(&mutex);
+     if (tmp == 0x10 || tmp == 0x20 || tmp == 0x50) {
+         *std = V4L2_STD_PAL;
++        pr_debug("%s#%d: V4L2_STD_PAL\n", __func__, __LINE__);
+     } else if (tmp == 0x00 || tmp == 0x30 || tmp == 0x40 || tmp == 0x60) {
+         *std = V4L2_STD_NTSC;
++        pr_debug("%s#%d: V4L2_STD_NTSC\n", __func__, __LINE__);
+     } else {
+         *std = V4L2_STD_ALL;
+-        pr_debug("Got invalid video standard!\n");
++        pr_debug("%s#%d: Got invalid video standard!\n", __func__, __LINE__);
+     }
+     mutex_unlock(&mutex);
+ 
+@@ -782,14 +784,14 @@ static int tw9992_g_std(struct v4l2_subdev *sd, v4l2_std_id *std) {
+     if(sensor->std_id != *std) {
+         /*sensor->std_id = *std;*/
+         if(*std == V4L2_STD_PAL) {
+-            pr_err("ioctl_g_std %Lx->%Lx PAL\n", sensor->std_id, *std);
++            pr_debug("%s#%d: %Lx->%Lx PAL\n", __func__, __LINE__, sensor->std_id, *std);
+             tw9992_stop_mipi(sensor);
+             WriteTW88S(sensor->i2c_client, tw9992_Decoder_PAL, ARRAY_SIZE(tw9992_Decoder_PAL));
+             WriteTW88(sensor->i2c_client, 0x70, ReadTW88(sensor->i2c_client, 0x70) |  0x10);
+             ret=tw9992_start_mipi(sensor);
+         }
+         else {
+-            pr_err("ioctl_g_std %Lx->%Lx NTSC\n", sensor->std_id, *std);
++            pr_debug("%s#%d: %Lx->%Lx NTSC or ALL\n", __func__, __LINE__, sensor->std_id, *std);
+             tw9992_stop_mipi(sensor);
+             WriteTW88S(sensor->i2c_client, tw9992_Decoder_NTSC, ARRAY_SIZE(tw9992_Decoder_NTSC));
+             WriteTW88(sensor->i2c_client, 0x70, ReadTW88(sensor->i2c_client, 0x70) & ~0x10);
+@@ -805,8 +807,32 @@ static int tw9992_g_std(struct v4l2_subdev *sd, v4l2_std_id *std) {
+ }
+ 
+ static int tw9992_s_std(struct v4l2_subdev *sd, v4l2_std_id std) {
+-    pr_debug("%s#%d: std=%Lx\n", __func__, __LINE__, std);
+-    return 0;
++	struct i2c_client *client = v4l2_get_subdevdata(sd);
++	struct tw9992 *sensor = to_tw9992(client);
++    int ret = 0;
++
++    if (std == V4L2_STD_PAL) {
++        pr_debug("%s#%d: %Lx->%Lx PAL\n", __func__, __LINE__, sensor->std_id, std);
++        tw9992_stop_mipi(sensor);
++        WriteTW88S(sensor->i2c_client, tw9992_Decoder_PAL, ARRAY_SIZE(tw9992_Decoder_PAL));
++        WriteTW88(sensor->i2c_client, 0x70, ReadTW88(sensor->i2c_client, 0x70) |  0x10);
++        ret=tw9992_start_mipi(sensor);
++    } else if (std == V4L2_STD_NTSC || std == V4L2_STD_ALL) {
++        pr_debug("%s#%d: %Lx->%Lx NTSC or ALL\n", __func__, __LINE__, sensor->std_id, std);
++        tw9992_stop_mipi(sensor);
++        WriteTW88S(sensor->i2c_client, tw9992_Decoder_NTSC, ARRAY_SIZE(tw9992_Decoder_NTSC));
++        WriteTW88(sensor->i2c_client, 0x70, ReadTW88(sensor->i2c_client, 0x70) & ~0x10);
++        ret=tw9992_start_mipi(sensor);
++    } else {
++        pr_debug("%s#%d: %Lx others\n", __func__, __LINE__, std);
++        return 0;
++    }
++
++    ret=tw9992_update_sensor_data(sensor, std);
++    if(ret)
++        pr_err("%s failed tw9992_update_sensor_data\n",__func__);
++
++    return ret;
+ }
+ 
+ static int tw9992_enum_framesizes(struct v4l2_subdev *sd,
+@@ -838,7 +864,7 @@ static int tw9992_enum_frameintervals(struct v4l2_subdev *sd,
+ 
+ 	if (fi->width == 0 || fi->height == 0 ||
+ 	    fi->code == 0) {
+-		pr_warn("Please assign pixel format, width and height.\n");
++		pr_warn("%s#%d: Please assign pixel format, width and height.\n", __func__, __LINE__);
+ 		return -EINVAL;
+ 	}    
+ 
+@@ -878,8 +904,10 @@ static int tw9992_set_fmt(struct v4l2_subdev *sd,
+ 
+     pr_debug("%s#%d: mbusformat=0x%X, pixelformat=0x%X\n", __func__, __LINE__, mf->code, sensor->pix.pixelformat);
+ 
+-	if (format->pad)
++	if (format->pad) {
++        pr_err("%s#%d\n", __func__, __LINE__);
+ 		return -EINVAL;
++	}
+ 
+ 	// mf->code = pixelformat2mbusformat(sensor->pix.pixelformat);
+ 	// mf->colorspace = V4L2_COLORSPACE_JPEG;
+@@ -889,8 +917,10 @@ static int tw9992_set_fmt(struct v4l2_subdev *sd,
+ 
+ 	// try_to_find_resolution(sensor, mf);
+ 
+-	if (format->which == V4L2_SUBDEV_FORMAT_TRY)
++	if (format->which == V4L2_SUBDEV_FORMAT_TRY) {
++        pr_debug("%s#%d\n", __func__, __LINE__);
+ 		return 0;
++	}
+ 
+ 	if (sensor->pix.pixelformat != mbusformat2pixelformat(mf->code)) {
+ 		//pr_err("%s pixelformat %x->%x\n", __func__, sensor->pix.pixelformat, f->fmt.pix.pixelformat);
+@@ -903,11 +933,13 @@ static int tw9992_set_fmt(struct v4l2_subdev *sd,
+         if (sensor->pix.pixelformat == V4L2_PIX_FMT_UYVY) {
+             // mipi_csi2_set_datatype(mipi_csi2_info, MIPI_DT_YUV422);
+ 		    WriteTW88(sensor->i2c_client, 0x49, ReadTW88(sensor->i2c_client, 0x49) & ~0x01);
++            pr_debug("%s#%d: V4L2_PIX_FMT_UYVY\n", __func__, __LINE__);
+         } else if (sensor->pix.pixelformat == V4L2_PIX_FMT_RGB565) {
+             // mipi_csi2_set_datatype(mipi_csi2_info, MIPI_DT_RGB565);
+ 		    WriteTW88(sensor->i2c_client, 0x49, ReadTW88(sensor->i2c_client, 0x49) | 0x01);
++            pr_debug("%s#%d: V4L2_PIX_FMT_RGB565\n", __func__, __LINE__);
+         } else {
+-		    pr_err("currently this sensor format can not be supported!\n");
++		    pr_err("%s#%d: currently this sensor format can not be supported!\n", __func__, __LINE__);
+ 		}
+ 		ret = tw9992_start_mipi(sensor);
+     }
+@@ -1021,7 +1053,7 @@ static int tw9992_init(struct v4l2_subdev *sd) {
+     WriteTW88S(sensor->i2c_client, tw9992_init_default, ARRAY_SIZE(tw9992_init_default));
+ 
+     if(sensor->std_id==V4L2_STD_PAL) {
+-        pr_debug("Ok!, It was PAL!!!\n");
++        pr_debug("%s#%d: Ok!, It was PAL!!!\n", __func__, __LINE__);
+         WriteTW88S(sensor->i2c_client, tw9992_Decoder_PAL, ARRAY_SIZE(tw9992_Decoder_PAL));
+         WriteTW88(sensor->i2c_client, 0x70, ReadTW88(sensor->i2c_client, 0x70) |  0x10);
+     }
+@@ -1042,7 +1074,7 @@ static int tw9992_init(struct v4l2_subdev *sd) {
+ 
+     if(sensor->std_id==V4L2_STD_PAL) {
+         if(sensor->pix.height != 576) {
+-            pr_debug("   sensor->pix.height %d->576\n",sensor->pix.height);
++            pr_debug("%s#%d:   sensor->pix.height %d->576\n", __func__, __LINE__, sensor->pix.height);
+             sensor->pix.width = 720;
+             sensor->pix.height = 576; /*BT656:625*/
+             sensor->streamcap.timeperframe.denominator = 25;
+@@ -1051,7 +1083,7 @@ static int tw9992_init(struct v4l2_subdev *sd) {
+     }
+     else {
+         if(sensor->pix.height != 480) {
+-            pr_debug("   sensor->pix.height %d->480\n",sensor->pix.height);
++            pr_debug("%s#%d:   sensor->pix.height %d->480\n", __func__, __LINE__, sensor->pix.height);
+             sensor->pix.width = 720;
+             sensor->pix.height = 480; /*BT656:525*/
+             sensor->streamcap.timeperframe.denominator = 30;
+@@ -1092,7 +1124,7 @@ static int tw9992_init(struct v4l2_subdev *sd) {
+     // if(ret)
+     //     pr_err("%s failed tw9992_check_csi2_rx_mipi_dphy\n",__func__);
+ 
+-    pr_debug("%s#%d ret=%d\n", __func__, __LINE__, ret);
++    pr_debug("%s#%d: ret=%d\n", __func__, __LINE__, ret);
+     return ret;
+ }
+ 
+@@ -1259,7 +1291,7 @@ static int tw9992_probe(struct i2c_client *client, const struct i2c_device_id *i
+     sensor->i2c_client = client;
+     sensor->pix.width = 720;
+     sensor->pix.height = 480;
+-    sensor->pix.field = V4L2_FIELD_INTERLACED_TB;
++    sensor->pix.field = V4L2_FIELD_INTERLACED;
+     sensor->pix.pixelformat = V4L2_PIX_FMT_UYVY;
+     sensor->pix.bytesperline = 720 * 2;
+     sensor->pix.sizeimage = 720 * 2 * 480;
+-- 
+2.21.0
+

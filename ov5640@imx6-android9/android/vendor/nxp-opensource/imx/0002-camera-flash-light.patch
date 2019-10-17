@@ -1,0 +1,169 @@
+From dea88fa45f87e8e84450c5a02f59ba6af5371478 Mon Sep 17 00:00:00 2001
+From: tingsung <tingsung@msi.com>
+Date: Wed, 16 Oct 2019 14:48:27 +0800
+Subject: [PATCH] camera flash light
+
+---
+ libcamera3/Camera.cpp   | 98 +++++++++++++++++++++++++++++++++++++++++
+ libcamera3/Camera.h     |  3 ++
+ libcamera3/Metadata.cpp |  2 +-
+ libcamera3/Stream.cpp   |  2 +
+ 4 files changed, 104 insertions(+), 1 deletion(-)
+
+diff --git a/libcamera3/Camera.cpp b/libcamera3/Camera.cpp
+index b3cc623..d78fde8 100755
+--- a/libcamera3/Camera.cpp
++++ b/libcamera3/Camera.cpp
+@@ -583,6 +583,8 @@ int32_t Camera::processCaptureRequest(camera3_capture_request_t *request)
+                 }
+             }
+             if (stillcap != NULL) {
++                ALOGD("%s#%d, %s turn on flashlight", __FILE__, __LINE__, __func__);
++                processFlashLeds(meta, 1);
+                 stillcap->setFps(fps);
+                 devStream->configure(stillcap);
+             } else {
+@@ -966,3 +968,99 @@ const camera3_device_ops_t Camera::sOps = {
+     .reserved = {0},
+ };
+ 
++void Camera::processFlashLeds(sp<Metadata> settings, int onoff) {
++//	const char *flash_mode_node = "/sys/class/leds/led1/device/mode";
++//	const char *flash_level_node = "/sys/class/leds/led1/device/level";
++	const char *flash_onoff_node = "/sys/class/leds/led1/brightness";
++	char value[2] = {0};
++	FILE *file = NULL;
++
++//we undefine u8 because entry.data.u8[0] will be consider u8 is data type cause compiler syntax error.
++#undef u8
++	//---------------------put flash light start----------------------//
++	uint8_t flashMode=-1;
++	int autoval, err;
++	int32_t flash_fd;
++	struct v4l2_control ctrl;
++	camera_metadata_entry_t entry = settings->find(/* ANDROID_FLASH_MODE */ANDROID_CONTROL_AE_MODE);
++
++	//ANDROID_FLASH_MODE : 0=off, 1=auto, 2=always on
++	if (entry.count > 0)
++		flashMode = entry.data.u8[0];
++
++	flash_fd = open(mDevPath, O_RDWR, O_NONBLOCK);
++	if (flash_fd <= 0) {
++		ALOGE("### processFlashLeds : fail to open device node ###");
++		return;
++	}
++	// notice ov5640 prepare to switch the resolution and take picture.
++	memset(&ctrl, 0, sizeof(ctrl));
++	ctrl.id = V4L2_CID_USER_CLASS;
++	ctrl.value = onoff;
++	if ((err = ioctl(flash_fd, VIDIOC_S_CTRL, &ctrl)) < 0) {
++		ALOGE("### fail VIDIOC_S_CTRL ioctl err is %d ###", err);
++	}
++
++	ALOGI("### flashMode : %d , onoff=%d ###", flashMode, onoff);
++	switch (flashMode) {
++		case /* ANDROID_FLASH_MODE_SINGLE */ANDROID_CONTROL_AE_MODE_ON_AUTO_FLASH:
++			memset(&ctrl, 0, sizeof(ctrl));
++			ctrl.id = V4L2_CID_GAIN;
++			if ((err = ioctl(flash_fd, VIDIOC_G_CTRL, &ctrl)) < 0) {
++				ALOGE("### fail VIDIOC_G_CTRL ioctl err is %d ###", err);
++			}
++			autoval = ctrl.value;
++			ALOGI("###autoval : %d , enabled : %d ###", autoval, onoff);
++#if defined(USE_CAMERA_13M)
++			if ((autoval < 0x60000) && (onoff == 1)) {
++#else
++			if ((autoval < 190) && (onoff == 1)) {
++#endif
++				break;
++			}
++			/*
++			 * Case ANDROID_FLASH_MODE_SINGLE's break is in IF statement, and depend on camera's gain value.
++			 * ANDROID_FLASH_MODE_SINGLE maybe run case ANDROID_FLASH_MODE_TORCH codes to control Flash LEDs.
++			 */
++		case /* ANDROID_FLASH_MODE_TORCH */ANDROID_CONTROL_AE_MODE_ON_ALWAYS_FLASH:
++/*
++			file = fopen(flash_mode_node, "w");
++			if (NULL != file) {
++				sprintf(value, "%d", onoff);
++				fwrite(value, 1, 1, file);
++				fclose(file);
++			} else {
++				ALOGE("%s: set led as flash mode failed", __func__);
++			}
++
++			file = fopen(flash_level_node, "w");
++			if (NULL != file) {
++				if (onoff == 1) {
++					fwrite("15", 1, 1, file);
++				} else {
++					fwrite("2", 1, 1, file);
++				}
++				fclose(file);
++			} else {
++				ALOGE("%s: set led as flash mode failed", __func__);
++			}
++*/
++			file = fopen(flash_onoff_node, "w");
++			if (NULL != file) {
++				sprintf(value, "%d", onoff);
++				fwrite(value, 1, 1, file);
++				fclose(file);
++				if (onoff == 1) {
++					usleep(600000);
++				}
++			} else {
++				ALOGE("%s: set flash led on/off faild", __func__);
++			}
++
++			break;
++		default:
++//			ALOGI("### ANDROID_FLASH_MODE_OFF, do nothing ###");
++			break;
++	}
++	return;
++}
+\ No newline at end of file
+diff --git a/libcamera3/Camera.h b/libcamera3/Camera.h
+index 06d8638..0fcf4cf 100644
+--- a/libcamera3/Camera.h
++++ b/libcamera3/Camera.h
+@@ -74,6 +74,9 @@ public:
+         return mTmpBuf;
+     }
+ 
++    // control flash led on/off
++	void processFlashLeds(sp<Metadata> settings, int onoff);
++
+ protected:
+     // Initialize static camera characteristics for individual device
+     virtual status_t initSensorStaticData() = 0;
+diff --git a/libcamera3/Metadata.cpp b/libcamera3/Metadata.cpp
+index a3dc117..b43ce49 100644
+--- a/libcamera3/Metadata.cpp
++++ b/libcamera3/Metadata.cpp
+@@ -513,7 +513,7 @@ camera_metadata_t* Metadata::createStaticInfo(SensorData& sensor, camera_info &c
+                availableAberrationModes);
+ 
+     /* flahs info */
+-    uint8_t flashInfoAvailable = ANDROID_FLASH_INFO_AVAILABLE_FALSE;
++    uint8_t flashInfoAvailable = ANDROID_FLASH_INFO_AVAILABLE_TRUE;
+     m.addUInt8(ANDROID_FLASH_INFO_AVAILABLE, 1, &flashInfoAvailable);
+ 
+     int32_t characteristics_keys_basic[] = {
+diff --git a/libcamera3/Stream.cpp b/libcamera3/Stream.cpp
+index 4bf8a81..f1dd2fa 100644
+--- a/libcamera3/Stream.cpp
++++ b/libcamera3/Stream.cpp
+@@ -381,6 +381,8 @@ int32_t Stream::processCaptureBuffer(StreamBuffer& src,
+         mJpegBuilder->setMetadata(meta);
+ 
+         res = processJpegBuffer(src, meta);
++        ALOGD("%s#%d, %s turn off flashlight", __FILE__, __LINE__, __func__);
++        mCamera->processFlashLeds(meta, 0);
+         mJpegBuilder->setMetadata(NULL);
+     }
+     else {
+-- 
+2.21.0
+

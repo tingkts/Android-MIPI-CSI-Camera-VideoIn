@@ -1,0 +1,227 @@
+From de00eda7ecc72a9f7b43b62dd9547b24ef66228e Mon Sep 17 00:00:00 2001
+From: tingsung <tingsung@msi.com>
+Date: Wed, 27 Jan 2021 14:50:09 +0800
+Subject: [PATCH] DON'T MERGE: Debug Only: print more trace logs
+
+---
+ .../device/qcom/msm8953_64/init.target.rc     |  4 +++
+ .../msm/camera_v2/sensor/cci/msm_cci.c        |  1 +
+ .../camera_v2/sensor/io/msm_camera_cci_i2c.c  | 26 +++++++++++++++++--
+ .../msm/camera_v2/sensor/msm_sensor_driver.c  |  5 ++--
+ 4 files changed, 32 insertions(+), 4 deletions(-)
+
+diff --git a/LA.UM.7.6.2/LINUX/android/device/qcom/msm8953_64/init.target.rc b/LA.UM.7.6.2/LINUX/android/device/qcom/msm8953_64/init.target.rc
+index 65b1d2044e..95ecf37396 100755
+--- a/LA.UM.7.6.2/LINUX/android/device/qcom/msm8953_64/init.target.rc
++++ b/LA.UM.7.6.2/LINUX/android/device/qcom/msm8953_64/init.target.rc
+@@ -147,6 +147,10 @@ service qrngp /system/bin/qrngp -f
+
+ on property:sys.boot_completed=1
+    start qrngp
++   setprop persist.vendor.camera.global.debug 3
++   setprop persist.vendor.camera.hal.debug 6
++   setprop persist.vendor.camera.isp.debug 5
++   setprop persist.vendor.camera.stats.af.debug 5
+
+ service vendor.qseecomd /vendor/bin/qseecomd
+    class core
+diff --git a/LA.UM.7.6.2/LINUX/android/kernel/msm-4.9/drivers/media/platform/msm/camera_v2/sensor/cci/msm_cci.c b/LA.UM.7.6.2/LINUX/android/kernel/msm-4.9/drivers/media/platform/msm/camera_v2/sensor/cci/msm_cci.c
+index b67af9c0ab..620c034c98 100644
+--- a/LA.UM.7.6.2/LINUX/android/kernel/msm-4.9/drivers/media/platform/msm/camera_v2/sensor/cci/msm_cci.c
++++ b/LA.UM.7.6.2/LINUX/android/kernel/msm-4.9/drivers/media/platform/msm/camera_v2/sensor/cci/msm_cci.c
+@@ -9,6 +9,7 @@
+  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  * GNU General Public License for more details.
+  */
++#define pr_fmt(fmt) "msm_cci.c " fmt
+
+ #include <linux/delay.h>
+ #include <linux/clk.h>
+diff --git a/LA.UM.7.6.2/LINUX/android/kernel/msm-4.9/drivers/media/platform/msm/camera_v2/sensor/io/msm_camera_cci_i2c.c b/LA.UM.7.6.2/LINUX/android/kernel/msm-4.9/drivers/media/platform/msm/camera_v2/sensor/io/msm_camera_cci_i2c.c
+index ae75ca981d..73a12f2cf2 100644
+--- a/LA.UM.7.6.2/LINUX/android/kernel/msm-4.9/drivers/media/platform/msm/camera_v2/sensor/io/msm_camera_cci_i2c.c
++++ b/LA.UM.7.6.2/LINUX/android/kernel/msm-4.9/drivers/media/platform/msm/camera_v2/sensor/io/msm_camera_cci_i2c.c
+@@ -9,14 +9,15 @@
+  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  * GNU General Public License for more details.
+  */
++#define pr_fmt(fmt) "msm_camera_cci_i2c.c " fmt
+
+ #include <soc/qcom/camera2.h>
+ #include "msm_camera_i2c.h"
+ #include "msm_cci.h"
+
+ #undef CDBG
+-#define CDBG(fmt, args...) pr_debug(fmt, ##args)
+-#define S_I2C_DBG(fmt, args...) pr_debug(fmt, ##args)
++#define CDBG(fmt, args...) pr_err(fmt, ##args)
++#define S_I2C_DBG(fmt, args...) pr_err(fmt, ##args)
+ #define MAX_I2C_ADDR_TYPE_SIZE (MSM_CAMERA_I2C_3B_ADDR + 1)
+ #define MAX_I2C_DATA_TYPE_SIZE (MSM_CAMERA_I2C_SET_BYTE_WRITE_MASK_DATA + 1)
+
+@@ -54,6 +55,7 @@ int32_t msm_camera_cci_i2c_read(struct msm_camera_i2c_client *client,
+ 		*data = buf[0] << 8 | buf[1];
+
+ 	S_I2C_DBG("%s addr = 0x%x data: 0x%x\n", __func__, addr, *data);
++	pr_err("%s: line %d rc = %d\n", __func__, __LINE__, rc);
+ 	return rc;
+ }
+
+@@ -135,6 +137,7 @@ int32_t msm_camera_cci_i2c_write(struct msm_camera_i2c_client *client,
+ 		return rc;
+ 	}
+ 	rc = cci_ctrl.status;
++	pr_err("%s: line %d rc = %d\n", __func__, __LINE__, rc);
+ 	return rc;
+ }
+
+@@ -191,6 +194,7 @@ static int32_t msm_camera_cci_i2c_write_table_cmd(
+ 	struct msm_camera_i2c_reg_setting *write_setting,
+ 	enum msm_cci_cmd_type cmd)
+ {
++	CDBG("%s %d\n", __func__, __LINE__);
+ 	int32_t rc = -EFAULT;
+ 	struct msm_camera_cci_ctrl cci_ctrl;
+
+@@ -210,6 +214,13 @@ static int32_t msm_camera_cci_i2c_write_table_cmd(
+ 	cci_ctrl.cfg.cci_i2c_write_cfg.data_type = write_setting->data_type;
+ 	cci_ctrl.cfg.cci_i2c_write_cfg.addr_type = client->addr_type;
+ 	cci_ctrl.cfg.cci_i2c_write_cfg.size = write_setting->size;
++
++	CDBG("%s %d regs size %d\n", __func__, __LINE__, cci_ctrl.cfg.cci_i2c_write_cfg.size);
++	if (cci_ctrl.cfg.cci_i2c_write_cfg.reg_setting != NULL)
++		CDBG("%s %d 0x%04x 0x%02x\n", __func__, __LINE__,
++				cci_ctrl.cfg.cci_i2c_write_cfg.reg_setting->reg_addr,
++				cci_ctrl.cfg.cci_i2c_write_cfg.reg_setting->reg_data);
++
+ 	rc = v4l2_subdev_call(client->cci_client->cci_subdev,
+ 			core, ioctl, VIDIOC_MSM_CCI_CFG, &cci_ctrl);
+ 	if (rc < 0) {
+@@ -230,6 +241,7 @@ int32_t msm_camera_cci_i2c_write_table_async(
+ 	struct msm_camera_i2c_client *client,
+ 	struct msm_camera_i2c_reg_setting *write_setting)
+ {
++	CDBG("%s %d\n", __func__, __LINE__);
+ 	return msm_camera_cci_i2c_write_table_cmd(client, write_setting,
+ 		MSM_CCI_I2C_WRITE_ASYNC);
+ }
+@@ -238,6 +250,7 @@ int32_t msm_camera_cci_i2c_write_table_sync(
+ 	struct msm_camera_i2c_client *client,
+ 	struct msm_camera_i2c_reg_setting *write_setting)
+ {
++	CDBG("%s %d\n", __func__, __LINE__);
+ 	return msm_camera_cci_i2c_write_table_cmd(client, write_setting,
+ 		MSM_CCI_I2C_WRITE_SYNC);
+ }
+@@ -246,6 +259,7 @@ int32_t msm_camera_cci_i2c_write_table_sync_block(
+ 	struct msm_camera_i2c_client *client,
+ 	struct msm_camera_i2c_reg_setting *write_setting)
+ {
++	CDBG("%s %d\n", __func__, __LINE__);
+ 	return msm_camera_cci_i2c_write_table_cmd(client, write_setting,
+ 		MSM_CCI_I2C_WRITE_SYNC_BLOCK);
+ }
+@@ -254,6 +268,7 @@ int32_t msm_camera_cci_i2c_write_table(
+ 	struct msm_camera_i2c_client *client,
+ 	struct msm_camera_i2c_reg_setting *write_setting)
+ {
++	CDBG("%s %d\n", __func__, __LINE__);
+ 	return msm_camera_cci_i2c_write_table_cmd(client, write_setting,
+ 		MSM_CCI_I2C_WRITE);
+ }
+@@ -262,6 +277,7 @@ int32_t msm_camera_cci_i2c_write_seq_table(
+ 	struct msm_camera_i2c_client *client,
+ 	struct msm_camera_i2c_seq_reg_setting *write_setting)
+ {
++	CDBG("%s %d\n", __func__, __LINE__);
+ 	int i;
+ 	int32_t rc = -EFAULT;
+ 	struct msm_camera_i2c_seq_reg_array *reg_setting;
+@@ -308,6 +324,7 @@ int32_t msm_camera_cci_i2c_write_table_w_microdelay(
+ 	struct msm_camera_i2c_client *client,
+ 	struct msm_camera_i2c_reg_setting *write_setting)
+ {
++	CDBG("%s %d\n", __func__, __LINE__);
+ 	int32_t rc = -EFAULT;
+ 	struct msm_camera_cci_ctrl cci_ctrl;
+
+@@ -341,6 +358,7 @@ static int32_t msm_camera_cci_i2c_compare(struct msm_camera_i2c_client *client,
+ 	uint32_t addr, uint16_t data,
+ 	enum msm_camera_i2c_data_type data_type)
+ {
++	CDBG("%s %d\n", __func__, __LINE__);
+ 	int32_t rc;
+ 	uint16_t reg_data = 0;
+ 	int data_len = 0;
+@@ -398,6 +416,7 @@ int32_t msm_camera_cci_i2c_poll(struct msm_camera_i2c_client *client,
+ 	uint32_t addr, uint16_t data,
+ 	enum msm_camera_i2c_data_type data_type, uint32_t delay_ms)
+ {
++	CDBG("%s %d\n", __func__, __LINE__);
+ 	int32_t rc = -EFAULT;
+ 	int32_t i = 0;
+
+@@ -432,6 +451,7 @@ static int32_t msm_camera_cci_i2c_set_mask(struct msm_camera_i2c_client *client,
+ 	uint32_t addr, uint16_t mask,
+ 	enum msm_camera_i2c_data_type data_type, uint16_t set_mask)
+ {
++	CDBG("%s %d\n", __func__, __LINE__);
+ 	int32_t rc = -EFAULT;
+ 	uint16_t reg_data;
+
+@@ -461,6 +481,7 @@ static int32_t msm_camera_cci_i2c_set_write_mask_data(
+ 	uint32_t addr, uint16_t data, int16_t mask,
+ 	enum msm_camera_i2c_data_type data_type)
+ {
++	CDBG("%s %d\n", __func__, __LINE__);
+ 	int32_t rc;
+ 	uint16_t reg_data;
+
+@@ -491,6 +512,7 @@ int32_t msm_camera_cci_i2c_write_conf_tbl(
+ 	struct msm_camera_i2c_reg_conf *reg_conf_tbl, uint16_t size,
+ 	enum msm_camera_i2c_data_type data_type)
+ {
++	CDBG("%s %d\n", __func__, __LINE__);
+ 	int i;
+ 	int32_t rc = -EFAULT;
+
+diff --git a/LA.UM.7.6.2/LINUX/android/kernel/msm-4.9/drivers/media/platform/msm/camera_v2/sensor/msm_sensor_driver.c b/LA.UM.7.6.2/LINUX/android/kernel/msm-4.9/drivers/media/platform/msm/camera_v2/sensor/msm_sensor_driver.c
+index 4bc13d03d3..e99b5ff456 100644
+--- a/LA.UM.7.6.2/LINUX/android/kernel/msm-4.9/drivers/media/platform/msm/camera_v2/sensor/msm_sensor_driver.c
++++ b/LA.UM.7.6.2/LINUX/android/kernel/msm-4.9/drivers/media/platform/msm/camera_v2/sensor/msm_sensor_driver.c
+@@ -9,6 +9,7 @@
+  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  * GNU General Public License for more details.
+  */
++#define pr_fmt(fmt) "msm_sensor_driver.c " fmt
+
+ #define SENSOR_DRIVER_I2C "camera"
+ /* Header file declaration */
+@@ -21,7 +22,7 @@
+
+ /* Logging macro */
+ #undef CDBG
+-#define CDBG(fmt, args...) pr_debug(fmt, ##args)
++#define CDBG(fmt, args...) pr_err(fmt, ##args)
+
+ #define SENSOR_MAX_MOUNTANGLE (360)
+
+@@ -145,6 +146,7 @@ static int32_t msm_sensor_driver_create_v4l_subdev
+ 	v4l2_subdev_init(&s_ctrl->msm_sd.sd, s_ctrl->sensor_v4l2_subdev_ops);
+ 	snprintf(s_ctrl->msm_sd.sd.name, sizeof(s_ctrl->msm_sd.sd.name), "%s",
+ 		s_ctrl->sensordata->sensor_name);
++
+ 	v4l2_set_subdevdata(&s_ctrl->msm_sd.sd, s_ctrl->pdev);
+ 	s_ctrl->msm_sd.sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
+ 	media_entity_pads_init(&s_ctrl->msm_sd.sd.entity, 0, NULL);
+@@ -1145,7 +1147,6 @@ int32_t msm_sensor_driver_probe(void *setting,
+ 	 * Create /dev/videoX node, comment for now until dummy /dev/videoX
+ 	 * node is created and used by HAL
+ 	 */
+-
+ 	if (s_ctrl->sensor_device_type == MSM_CAMERA_PLATFORM_DEVICE)
+ 		rc = msm_sensor_driver_create_v4l_subdev(s_ctrl);
+ 	else
+--
+2.17.1
+

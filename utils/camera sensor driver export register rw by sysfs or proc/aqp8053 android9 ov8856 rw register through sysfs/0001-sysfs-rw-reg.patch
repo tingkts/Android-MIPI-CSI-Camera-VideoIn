@@ -1,0 +1,159 @@
+From 5ccf6b8f411f6bfe93b770b5e3bcf3856eb9d23e Mon Sep 17 00:00:00 2001
+From: ting <ting@gmail.com>
+Date: Thu, 7 Jan 2021 13:28:55 +0800
+Subject: [PATCH] sysfs rw reg
+
+---
+ .../camera_v2/sensor/io/msm_camera_cci_i2c.c  |   2 +
+ .../msm/camera_v2/sensor/msm_sensor_driver.c  | 108 ++++++++++++++++++
+ 2 files changed, 110 insertions(+)
+
+diff --git a/LA.UM.7.6.2/LINUX/android/kernel/msm-4.9/drivers/media/platform/msm/camera_v2/sensor/io/msm_camera_cci_i2c.c b/LA.UM.7.6.2/LINUX/android/kernel/msm-4.9/drivers/media/platform/msm/camera_v2/sensor/io/msm_camera_cci_i2c.c
+index 0f3fa957d5..720c568acd 100644
+--- a/LA.UM.7.6.2/LINUX/android/kernel/msm-4.9/drivers/media/platform/msm/camera_v2/sensor/io/msm_camera_cci_i2c.c
++++ b/LA.UM.7.6.2/LINUX/android/kernel/msm-4.9/drivers/media/platform/msm/camera_v2/sensor/io/msm_camera_cci_i2c.c
+@@ -55,6 +55,7 @@ int32_t msm_camera_cci_i2c_read(struct msm_camera_i2c_client *client,
+ 		*data = buf[0] << 8 | buf[1];
+
+ 	S_I2C_DBG("%s addr = 0x%x data: 0x%x\n", __func__, addr, *data);
++	pr_err("%s: line %d rc = %d\n", __func__, __LINE__, rc);
+ 	return rc;
+ }
+
+@@ -136,6 +137,7 @@ int32_t msm_camera_cci_i2c_write(struct msm_camera_i2c_client *client,
+ 		return rc;
+ 	}
+ 	rc = cci_ctrl.status;
++	pr_err("%s: line %d rc = %d\n", __func__, __LINE__, rc);
+ 	return rc;
+ }
+
+diff --git a/LA.UM.7.6.2/LINUX/android/kernel/msm-4.9/drivers/media/platform/msm/camera_v2/sensor/msm_sensor_driver.c b/LA.UM.7.6.2/LINUX/android/kernel/msm-4.9/drivers/media/platform/msm/camera_v2/sensor/msm_sensor_driver.c
+index e99b5ff456..37aaa98d19 100644
+--- a/LA.UM.7.6.2/LINUX/android/kernel/msm-4.9/drivers/media/platform/msm/camera_v2/sensor/msm_sensor_driver.c
++++ b/LA.UM.7.6.2/LINUX/android/kernel/msm-4.9/drivers/media/platform/msm/camera_v2/sensor/msm_sensor_driver.c
+@@ -1422,6 +1422,111 @@ static int32_t msm_sensor_driver_parse(struct msm_sensor_ctrl_t *s_ctrl)
+ 	return rc;
+ }
+
++static ssize_t cs_sysfs_show_test(struct device *dev, struct device_attribute *attr, char *buf)
++{
++	CDBG("%s entry\n", __func__);
++	return 1;
++}
++
++int cs_sysfs_rw_reg_addr;
++int cs_sysfs_rw_reg_addr_from, cs_sysfs_rw_reg_addr_to;
++
++static ssize_t cs_sysfs_r_reg(struct device *dev, struct device_attribute *attr, char *buf)
++{
++	struct msm_sensor_ctrl_t *s_ctrl;
++	int addr = 0, reg_value = 0;
++
++	s_ctrl = g_sctrl[2];
++	CDBG("%s slave_addr = 0x%X id_addr = 0x%X\n", __func__,
++		s_ctrl->sensordata->slave_info->sensor_slave_addr,
++		s_ctrl->sensordata->slave_info->sensor_id_reg_addr);
++
++	CDBG("%s reg addr = 0x%04x, 0x%04x, 0x%04x\n", __func__,
++			cs_sysfs_rw_reg_addr, cs_sysfs_rw_reg_addr_from, cs_sysfs_rw_reg_addr_to);
++
++	if (cs_sysfs_rw_reg_addr != 0x00) {
++		s_ctrl->sensor_i2c_client->i2c_func_tbl->i2c_read(s_ctrl->sensor_i2c_client,
++				cs_sysfs_rw_reg_addr, &reg_value, MSM_CAMERA_I2C_BYTE_DATA);
++		CDBG("%s reg addr = 0x%04x, value = 0x%02x\n", __func__, cs_sysfs_rw_reg_addr, reg_value);
++	} else if (cs_sysfs_rw_reg_addr_from != 0x00 && cs_sysfs_rw_reg_addr_to != 0x00) {
++		for (addr = cs_sysfs_rw_reg_addr_from ; addr <= cs_sysfs_rw_reg_addr_to ; addr++ ) {
++			s_ctrl->sensor_i2c_client->i2c_func_tbl->i2c_read(s_ctrl->sensor_i2c_client,
++					addr, &reg_value, MSM_CAMERA_I2C_BYTE_DATA);
++			CDBG("%s reg addr = 0x%04x, value = 0x%02x\n", __func__, addr, reg_value);
++		}
++	} else {
++		CDBG("%s invalid addr!\n", __func__);
++		return -EINVAL;
++	}
++	return 1;
++}
++
++static ssize_t cs_sysfs_w_reg(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
++{
++	struct msm_sensor_ctrl_t *s_ctrl;
++	int reg_value;
++
++	s_ctrl = g_sctrl[2];
++	CDBG("%s slave_addr = 0x%X id_addr = 0x%X\n", __func__,
++		s_ctrl->sensordata->slave_info->sensor_slave_addr,
++		s_ctrl->sensordata->slave_info->sensor_id_reg_addr);
++
++	CDBG("%s buf = %s", __func__, buf);
++	CDBG("%s buf count=%d\n", __func__, count);
++
++	if (buf[0] == '0' && buf[1] == 'x') {
++	} else {
++		CDBG("%s invalid buf prefix!\n", __func__);
++		return -EINVAL;
++	}
++
++	if (count == 12 || count == 7 || count == 14) {
++	} else {
++		CDBG("%s invalid buf count!\n", __func__);
++		return -EINVAL;
++	}
++
++	cs_sysfs_rw_reg_addr = cs_sysfs_rw_reg_addr_from = cs_sysfs_rw_reg_addr_to = 0;
++
++	if (count == 12) { 		// force "0x8080 0x81" for rw single value
++		sscanf(buf, "%x %x", &cs_sysfs_rw_reg_addr, &reg_value);
++		CDBG("%s reg addr = 0x%04x, value = 0x%02x\n", __func__, cs_sysfs_rw_reg_addr, reg_value);
++
++		s_ctrl->sensor_i2c_client->i2c_func_tbl->i2c_write(s_ctrl->sensor_i2c_client,
++				cs_sysfs_rw_reg_addr, reg_value, MSM_CAMERA_I2C_BYTE_DATA);
++		return count;
++	} else if (count == 7) { // force "0x8080" for r single value
++		sscanf(buf, "%x", &cs_sysfs_rw_reg_addr);
++		CDBG("%s reg addr = 0x%04x\n", __func__, cs_sysfs_rw_reg_addr);
++	} else if (count == 14) { // force "0x8080 0x8081" for r a range
++		sscanf(buf, "%x %x", &cs_sysfs_rw_reg_addr_from, &cs_sysfs_rw_reg_addr_to);
++		CDBG("%s reg addr range = 0x%04x ~ 0x%04x\n", __func__, cs_sysfs_rw_reg_addr_from, cs_sysfs_rw_reg_addr_to);
++	}
++	return -EPERM;
++}
++
++static DEVICE_ATTR(cs_rw_reg, S_IRUGO | S_IWUSR, cs_sysfs_r_reg, cs_sysfs_w_reg);
++static DEVICE_ATTR(cs_test, S_IRUGO | S_IWUSR, cs_sysfs_show_test, NULL);
++
++static struct attribute *attrs[] = {
++        &dev_attr_cs_rw_reg.attr,
++        &dev_attr_cs_test.attr,
++        NULL,
++};
++
++static struct attribute_group attr_group = {
++    .attrs = attrs,
++};
++
++static int cs_sysfs_register(struct device *dev)
++{
++	CDBG("%s:%d\n", __func__, __LINE__);
++	if (dev == NULL)
++		return sysfs_create_group(NULL, &attr_group);
++	CDBG("%s:%d\n", __func__, __LINE__);
++    return sysfs_create_group(&dev->kobj, &attr_group);
++}
++
+ static int32_t msm_sensor_driver_platform_probe(struct platform_device *pdev)
+ {
+ 	int32_t rc = 0;
+@@ -1462,6 +1567,9 @@ static int32_t msm_sensor_driver_platform_probe(struct platform_device *pdev)
+
+ 	/* Fill device in power info */
+ 	s_ctrl->sensordata->power_info.dev = &pdev->dev;
++
++	cs_sysfs_register(&pdev->dev);
++
+ 	return rc;
+ FREE_S_CTRL:
+ 	kfree(s_ctrl);
+--
+2.17.1
+

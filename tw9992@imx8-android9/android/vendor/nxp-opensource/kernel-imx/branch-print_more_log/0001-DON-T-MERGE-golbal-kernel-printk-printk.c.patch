@@ -1,0 +1,25 @@
+From b6e5b9f68c8c45c0ad376d6b7f7f52f85fc65a52 Mon Sep 17 00:00:00 2001
+From: tingsung <tingsung@msi.com>
+Date: Thu, 14 Nov 2019 17:44:32 +0800
+Subject: [PATCH 1/2] [DON'T MERGE] {golbal} kernel/printk/printk.c
+
+---
+ kernel/printk/printk.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/kernel/printk/printk.c b/kernel/printk/printk.c
+index 2e2c86dd226f..ba392ef0ae9f 100644
+--- a/kernel/printk/printk.c
++++ b/kernel/printk/printk.c
+@@ -60,7 +60,7 @@
+ #include "internal.h"
+ 
+ int console_printk[4] = {
+-	CONSOLE_LOGLEVEL_DEFAULT,	/* console_loglevel */
++	/* CONSOLE_LOGLEVEL_DEFAULT */15,	/* console_loglevel */
+ 	MESSAGE_LOGLEVEL_DEFAULT,	/* default_message_loglevel */
+ 	CONSOLE_LOGLEVEL_MIN,		/* minimum_console_loglevel */
+ 	CONSOLE_LOGLEVEL_DEFAULT,	/* default_console_loglevel */
+-- 
+2.21.0
+

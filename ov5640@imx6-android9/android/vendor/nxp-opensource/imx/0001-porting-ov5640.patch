@@ -1,0 +1,25 @@
+From e849625b250a0f5c5e569d02930f3b64239ee024 Mon Sep 17 00:00:00 2001
+From: tingsung <tingsung@msi.com>
+Date: Thu, 1 Aug 2019 17:15:13 +0800
+Subject: [PATCH] porting ov5640
+
+---
+ libcamera3/CameraUtils.h | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/libcamera3/CameraUtils.h b/libcamera3/CameraUtils.h
+index 622c6e8..c7eafb9 100644
+--- a/libcamera3/CameraUtils.h
++++ b/libcamera3/CameraUtils.h
+@@ -59,7 +59,7 @@
+ 
+ #define UVC_SENSOR_NAME "uvc"
+ #define OV5640_SENSOR_NAME "csi"
+-#define OV5640MIPI_SENSOR_NAME "ov5640_mipi"
++#define OV5640MIPI_SENSOR_NAME "ov5640_mipi_camera"
+ #define OV5642CSI_SENSOR_NAME "ov5642_camera"
+ #define OV5640CSI_SENSOR_NAME "ov5640_camera"
+ #define IMX8_OV5640_SENSOR_NAME "imx8_ov5640"
+-- 
+2.21.0
+

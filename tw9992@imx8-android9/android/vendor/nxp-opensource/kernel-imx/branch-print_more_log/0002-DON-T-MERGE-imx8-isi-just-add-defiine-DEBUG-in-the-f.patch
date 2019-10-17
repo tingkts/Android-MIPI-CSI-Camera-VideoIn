@@ -1,0 +1,159 @@
+From 51f9cfab902a00aea42a31574b4b6f02ec91ae31 Mon Sep 17 00:00:00 2001
+From: tingsung <tingsung@msi.com>
+Date: Mon, 25 Nov 2019 17:34:42 +0800
+Subject: [PATCH 2/2] [DON'T MERGE] {imx8 isi} just add "#defiine DEBUG" in the
+ first line of c code file to enable dev_dbg()
+
+scope: ISI @ drivers/media/platform/imx8
+---
+ drivers/media/platform/imx8/max9286.c           | 1 +
+ drivers/media/platform/imx8/mxc-isi-cap.c       | 1 +
+ drivers/media/platform/imx8/mxc-isi-core.c      | 1 +
+ drivers/media/platform/imx8/mxc-isi-hw.c        | 1 +
+ drivers/media/platform/imx8/mxc-isi-m2m.c       | 1 +
+ drivers/media/platform/imx8/mxc-jpeg-hw.c       | 2 +-
+ drivers/media/platform/imx8/mxc-jpeg.c          | 1 +
+ drivers/media/platform/imx8/mxc-media-dev.c     | 2 +-
+ drivers/media/platform/imx8/mxc-mipi-csi2.c     | 1 +
+ drivers/media/platform/imx8/mxc-mipi-csi2_yav.c | 1 +
+ drivers/media/platform/imx8/ov5640_mipi_v3.c    | 2 +-
+ 11 files changed, 11 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/media/platform/imx8/max9286.c b/drivers/media/platform/imx8/max9286.c
+index 4bb47f949076..b3f0eb64431d 100644
+--- a/drivers/media/platform/imx8/max9286.c
++++ b/drivers/media/platform/imx8/max9286.c
+@@ -9,6 +9,7 @@
+  * http://www.opensource.org/licenses/gpl-license.html
+  * http://www.gnu.org/copyleft/gpl.html
+  */
++#define DEBUG 
+ #include <linux/module.h>
+ #include <linux/init.h>
+ #include <linux/slab.h>
+diff --git a/drivers/media/platform/imx8/mxc-isi-cap.c b/drivers/media/platform/imx8/mxc-isi-cap.c
+index 16d43b6a786f..8b167de0a0a0 100644
+--- a/drivers/media/platform/imx8/mxc-isi-cap.c
++++ b/drivers/media/platform/imx8/mxc-isi-cap.c
+@@ -9,6 +9,7 @@
+  * http://www.opensource.org/licenses/gpl-license.html
+  * http://www.gnu.org/copyleft/gpl.html
+  */
++#define DEBUG
+ #include <linux/module.h>
+ #include <linux/kernel.h>
+ #include <linux/types.h>
+diff --git a/drivers/media/platform/imx8/mxc-isi-core.c b/drivers/media/platform/imx8/mxc-isi-core.c
+index ae9daf9d98e4..8fe8900d9cca 100644
+--- a/drivers/media/platform/imx8/mxc-isi-core.c
++++ b/drivers/media/platform/imx8/mxc-isi-core.c
+@@ -9,6 +9,7 @@
+  * http://www.opensource.org/licenses/gpl-license.html
+  * http://www.gnu.org/copyleft/gpl.html
+  */
++#define DEBUG
+ #include "mxc-media-dev.h"
+ 
+ static irqreturn_t mxc_isi_irq_handler(int irq, void *priv)
+diff --git a/drivers/media/platform/imx8/mxc-isi-hw.c b/drivers/media/platform/imx8/mxc-isi-hw.c
+index f2774076d61e..f8f7ebc681d5 100644
+--- a/drivers/media/platform/imx8/mxc-isi-hw.c
++++ b/drivers/media/platform/imx8/mxc-isi-hw.c
+@@ -9,6 +9,7 @@
+  * http://www.opensource.org/licenses/gpl-license.html
+  * http://www.gnu.org/copyleft/gpl.html
+  */
++#define DEBUG
+ #include <soc/imx8/sc/sci.h>
+ #include <dt-bindings/pinctrl/pads-imx8qxp.h>
+ 
+diff --git a/drivers/media/platform/imx8/mxc-isi-m2m.c b/drivers/media/platform/imx8/mxc-isi-m2m.c
+index 6711ba26d5e1..8293f9818941 100644
+--- a/drivers/media/platform/imx8/mxc-isi-m2m.c
++++ b/drivers/media/platform/imx8/mxc-isi-m2m.c
+@@ -9,6 +9,7 @@
+  * http://www.opensource.org/licenses/gpl-license.html
+  * http://www.gnu.org/copyleft/gpl.html
+  */
++#define DEBUG
+ #include <linux/module.h>
+ #include <linux/kernel.h>
+ #include <linux/types.h>
+diff --git a/drivers/media/platform/imx8/mxc-jpeg-hw.c b/drivers/media/platform/imx8/mxc-jpeg-hw.c
+index 2263ec426790..fa258711c85d 100644
+--- a/drivers/media/platform/imx8/mxc-jpeg-hw.c
++++ b/drivers/media/platform/imx8/mxc-jpeg-hw.c
+@@ -9,7 +9,7 @@
+  * http://www.opensource.org/licenses/gpl-license.html
+  * http://www.gnu.org/copyleft/gpl.html
+  */
+-
++#define DEBUG
+ #include <linux/delay.h>
+ #include <media/videobuf2-core.h>
+ #include "mxc-jpeg-hw.h"
+diff --git a/drivers/media/platform/imx8/mxc-jpeg.c b/drivers/media/platform/imx8/mxc-jpeg.c
+index 58ac99c86d5f..2550699f6604 100644
+--- a/drivers/media/platform/imx8/mxc-jpeg.c
++++ b/drivers/media/platform/imx8/mxc-jpeg.c
+@@ -9,6 +9,7 @@
+  * http://www.opensource.org/licenses/gpl-license.html
+  * http://www.gnu.org/copyleft/gpl.html
+  */
++#define DEBUG
+ #include <linux/kernel.h>
+ #include <linux/module.h>
+ #include <linux/io.h>
+diff --git a/drivers/media/platform/imx8/mxc-media-dev.c b/drivers/media/platform/imx8/mxc-media-dev.c
+index b3300ad8eb0f..2aaeb6deadb0 100644
+--- a/drivers/media/platform/imx8/mxc-media-dev.c
++++ b/drivers/media/platform/imx8/mxc-media-dev.c
+@@ -9,7 +9,7 @@
+  * http://www.opensource.org/licenses/gpl-license.html
+  * http://www.gnu.org/copyleft/gpl.html
+  */
+-
++#define DEBUG
+ #include <linux/bug.h>
+ #include <linux/clk.h>
+ #include <linux/clk-provider.h>
+diff --git a/drivers/media/platform/imx8/mxc-mipi-csi2.c b/drivers/media/platform/imx8/mxc-mipi-csi2.c
+index aaa0e638800a..6679ba41b005 100644
+--- a/drivers/media/platform/imx8/mxc-mipi-csi2.c
++++ b/drivers/media/platform/imx8/mxc-mipi-csi2.c
+@@ -9,6 +9,7 @@
+  * http://www.opensource.org/licenses/gpl-license.html
+  * http://www.gnu.org/copyleft/gpl.html
+  */
++#define DEBUG
+ #include <linux/clk.h>
+ #include <linux/delay.h>
+ #include <linux/device.h>
+diff --git a/drivers/media/platform/imx8/mxc-mipi-csi2_yav.c b/drivers/media/platform/imx8/mxc-mipi-csi2_yav.c
+index abeb38279962..55c09ce0ecf3 100644
+--- a/drivers/media/platform/imx8/mxc-mipi-csi2_yav.c
++++ b/drivers/media/platform/imx8/mxc-mipi-csi2_yav.c
+@@ -11,6 +11,7 @@
+  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  * GNU General Public License for more details.
+  */
++#define DEBUG
+ #include <linux/clk.h>
+ #include <linux/delay.h>
+ #include <linux/device.h>
+diff --git a/drivers/media/platform/imx8/ov5640_mipi_v3.c b/drivers/media/platform/imx8/ov5640_mipi_v3.c
+index 82ef3e241e3d..d6d1e5b70608 100644
+--- a/drivers/media/platform/imx8/ov5640_mipi_v3.c
++++ b/drivers/media/platform/imx8/ov5640_mipi_v3.c
+@@ -10,7 +10,7 @@
+  * http://www.opensource.org/licenses/gpl-license.html
+  * http://www.gnu.org/copyleft/gpl.html
+  */
+-
++#define DEBUG
+ #include <linux/clk.h>
+ #include <linux/delay.h>
+ #include <linux/device.h>
+-- 
+2.21.0
+

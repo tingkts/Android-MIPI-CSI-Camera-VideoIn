@@ -1,0 +1,841 @@
+From 8b0dbcaa337253f7119ff3554a82aa171fac2519 Mon Sep 17 00:00:00 2001
+From: ting <ting@gmail.com>
+Date: Wed, 27 Jan 2021 14:36:28 +0800
+Subject: [PATCH] porting camera sensor ov8856, ov5640
+
+---
+ .../dts/qcom/msm8953-camera-sensor-mtp.dtsi   |  37 +-
+ .../arm64/boot/dts/qcom/msm8953-pinctrl.dtsi  | 100 ++++-
+ .../sensors/configs/msm8953_camera.xml        | 346 +-----------------
+ .../sensors/sensor/libs/ov5645/ov5645_lib.h   |  56 +--
+ .../sensors/sensor/libs/ov8856/ov8856_lib.h   |  54 +--
+ 5 files changed, 144 insertions(+), 449 deletions(-)
+ mode change 100755 => 100644 LA.UM.7.6.2/LINUX/android/vendor/qcom/proprietary/mm-camera/mm-camera2/media-controller/modules/sensors/sensor/libs/ov8856/ov8856_lib.h
+
+diff --git a/LA.UM.7.6.2/LINUX/android/kernel/msm-4.9/arch/arm64/boot/dts/qcom/msm8953-camera-sensor-mtp.dtsi b/LA.UM.7.6.2/LINUX/android/kernel/msm-4.9/arch/arm64/boot/dts/qcom/msm8953-camera-sensor-mtp.dtsi
+index d47dd7500f..cfb2d75220 100644
+--- a/LA.UM.7.6.2/LINUX/android/kernel/msm-4.9/arch/arm64/boot/dts/qcom/msm8953-camera-sensor-mtp.dtsi
++++ b/LA.UM.7.6.2/LINUX/android/kernel/msm-4.9/arch/arm64/boot/dts/qcom/msm8953-camera-sensor-mtp.dtsi
+@@ -214,21 +214,19 @@
+ 		pinctrl-0 = <&cam_sensor_mclk0_default
+ 				&cam_sensor_rear_default
+ 				&cam_sensor_rear_vana>;
+-		pinctrl-1 = <&cam_sensor_mclk0_sleep &cam_sensor_rear_sleep
++		pinctrl-1 = <&cam_sensor_mclk0_sleep
++				&cam_sensor_rear_sleep
+ 				&cam_sensor_rear_vana_sleep>;
+ 		gpios = <&tlmm 26 0>,
+ 			<&tlmm 40 0>,
+-			<&tlmm 39 0>,
+-			<&tlmm 134 0>;
++			<&tlmm 46 0>;
+ 		qcom,gpio-reset = <1>;
+-		qcom,gpio-standby = <2>;
+-		qcom,gpio-vana = <3>;
+-		qcom,gpio-req-tbl-num = <0 1 2 3>;
+-		qcom,gpio-req-tbl-flags = <1 0 0 0>;
++		qcom,gpio-vdig = <2>;
++		qcom,gpio-req-tbl-num = <0 1 2>;
++		qcom,gpio-req-tbl-flags = <1 0 0>;
+ 		qcom,gpio-req-tbl-label = "CAMIF_MCLK0",
+ 			"CAM_RESET0",
+-			"CAM_STANDBY0",
+-			"CAM_VANA";
++			"CAM_VDIG";
+ 		qcom,sensor-position = <0>;
+ 		qcom,sensor-mode = <0>;
+ 		qcom,cci-master = <0>;
+@@ -275,7 +273,7 @@
+ 		qcom,sensor-position = <0x100>;
+ 		qcom,sensor-mode = <1>;
+ 		qcom,cci-master = <1>;
+-		status = "ok";
++		status = "disabled";
+ 		clocks = <&clock_gcc clk_mclk2_clk_src>,
+ 				<&clock_gcc clk_gcc_camss_mclk2_clk>;
+ 		clock-names = "cam_src_clk", "cam_clk";
+@@ -303,19 +301,26 @@
+ 		qcom,gpio-no-mux = <0>;
+ 		pinctrl-names = "cam_default", "cam_suspend";
+ 		pinctrl-0 = <&cam_sensor_mclk1_default
+-				&cam_sensor_front1_default>;
++				&cam_sensor_front_reset
++				&cam_sensor_front_pwd
++				&cam_sensor_front_vdig>;
+ 		pinctrl-1 = <&cam_sensor_mclk1_sleep
+-				&cam_sensor_front1_sleep>;
++				&cam_sensor_front_reset_sleep
++				&cam_sensor_front_pwd_sleep
++				&cam_sensor_front_vdig_sleep>;
+ 		gpios = <&tlmm 27 0>,
+ 			<&tlmm 129 0>,
+-			<&tlmm 130 0>;
++			<&tlmm 130 0>,
++			<&tlmm 52 0>;
+ 		qcom,gpio-reset = <1>;
+ 		qcom,gpio-standby = <2>;
+-		qcom,gpio-req-tbl-num = <0 1 2>;
+-		qcom,gpio-req-tbl-flags = <1 0 0>;
++		qcom,gpio-vdig = <3>;
++		qcom,gpio-req-tbl-num = <0 1 2 3>;
++		qcom,gpio-req-tbl-flags = <1 0 0 0>;
+ 		qcom,gpio-req-tbl-label = "CAMIF_MCLK2",
+ 					  "CAM_RESET2",
+-					  "CAM_STANDBY2";
++					  "CAM_STANDBY2",
++					  "CAM_VDIG2";
+ 		qcom,sensor-position = <1>;
+ 		qcom,sensor-mode = <0>;
+ 		qcom,cci-master = <1>;
+diff --git a/LA.UM.7.6.2/LINUX/android/kernel/msm-4.9/arch/arm64/boot/dts/qcom/msm8953-pinctrl.dtsi b/LA.UM.7.6.2/LINUX/android/kernel/msm-4.9/arch/arm64/boot/dts/qcom/msm8953-pinctrl.dtsi
+index 9da42f99b3..28c744d381 100644
+--- a/LA.UM.7.6.2/LINUX/android/kernel/msm-4.9/arch/arm64/boot/dts/qcom/msm8953-pinctrl.dtsi
++++ b/LA.UM.7.6.2/LINUX/android/kernel/msm-4.9/arch/arm64/boot/dts/qcom/msm8953-pinctrl.dtsi
+@@ -173,12 +173,12 @@
+ 		cam_sensor_rear_default: cam_sensor_rear_default {
+ 			/* RESET, STANDBY */
+ 			mux {
+-				pins = "gpio40", "gpio39";
++				pins = "gpio40";
+ 				function = "gpio";
+ 			};
+
+ 			config {
+-				pins = "gpio40","gpio39";
++				pins = "gpio40";
+ 				bias-disable; /* No PULL */
+ 				drive-strength = <2>; /* 2 MA */
+ 			};
+@@ -187,12 +187,12 @@
+ 		cam_sensor_rear_sleep: cam_sensor_rear_sleep {
+ 			/* RESET, STANDBY */
+ 			mux {
+-				pins = "gpio40","gpio39";
++				pins = "gpio40";
+ 				function = "gpio";
+ 			};
+
+ 			config {
+-				pins = "gpio40","gpio39";
++				pins = "gpio40";
+ 				bias-disable; /* No PULL */
+ 				drive-strength = <2>; /* 2 MA */
+ 			};
+@@ -229,12 +229,12 @@
+ 		cam_sensor_rear_vana: cam_sensor_rear_vdig {
+ 			/* VDIG */
+ 			mux {
+-				pins = "gpio134";
++				pins = "gpio46";
+ 				function = "gpio";
+ 			};
+
+ 			config {
+-				pins = "gpio134";
++				pins = "gpio46";
+ 				bias-disable; /* No PULL */
+ 				drive-strength = <2>; /* 2 MA */
+ 			};
+@@ -243,12 +243,12 @@
+ 		cam_sensor_rear_vana_sleep: cam_sensor_rear_vdig_sleep {
+ 			/* VDIG */
+ 			mux {
+-				pins = "gpio134";
++				pins = "gpio46";
+ 				function = "gpio";
+ 			};
+
+ 			config {
+-				pins = "gpio134";
++				pins = "gpio46";
+ 				bias-disable; /* No PULL */
+ 				drive-strength = <2>; /* 2 MA */
+ 			};
+@@ -370,6 +370,90 @@
+ 			};
+ 		};
+
++		cam_sensor_front_reset: cam_sensor_front_reset {
++			mux {
++				pins = "gpio129";
++				function = "gpio";
++			};
++
++			config {
++				pins = "gpio129";
++				drive-strength = <2>; /* 2 MA */
++				bias-pull-up;
++				output-high;
++			};
++		};
++
++		cam_sensor_front_reset_sleep: cam_sensor_front_reset_sleep {
++			mux {
++				pins = "gpio129";
++				function = "gpio";
++			};
++
++			config {
++				pins = "gpio129";
++				drive-strength = <2>; /* 2 MA */
++				bias-pull-up;
++				output-high;
++			};
++		};
++
++		cam_sensor_front_pwd: cam_sensor_front_pwd {
++			mux {
++				pins = "gpio130";
++				function = "gpio";
++			};
++
++			config {
++				pins = "gpio130";
++				drive-strength = <2>; /* 2 MA */
++				bias-pull-down;
++				output-low;
++			};
++		};
++
++		cam_sensor_front_pwd_sleep: cam_sensor_front_pwd_sleep {
++			mux {
++				pins = "gpio130";
++				function = "gpio";
++			};
++
++			config {
++				pins = "gpio130";
++				drive-strength = <2>; /* 2 MA */
++				bias-pull-up;
++				output-high;
++			};
++		};
++
++		cam_sensor_front_vdig: cam_sensor_front_vdig {
++			mux {
++				pins = "gpio52";
++				function = "gpio";
++			};
++
++			config {
++				pins = "gpio52";
++				drive-strength = <2>; /* 2 MA */
++				bias-pull-up;
++				output-high;
++			};
++		};
++
++		cam_sensor_front_vdig_sleep: cam_sensor_front_vdig_sleep {
++			mux {
++				pins = "gpio52";
++				function = "gpio";
++			};
++
++			config {
++				pins = "gpio52";
++				drive-strength = <2>; /* 2 MA */
++				bias-pull-down;
++				output-low;
++			};
++		};
++
+ 		pmx_adv7533_int: pmx_adv7533_int {
+ 			adv7533_int_active: adv7533_int_active {
+ 				mux {
+diff --git a/LA.UM.7.6.2/LINUX/android/vendor/qcom/proprietary/mm-camera/mm-camera2/media-controller/modules/sensors/configs/msm8953_camera.xml b/LA.UM.7.6.2/LINUX/android/vendor/qcom/proprietary/mm-camera/mm-camera2/media-controller/modules/sensors/configs/msm8953_camera.xml
+index dc6e1bd5f0..d2b12b240b 100755
+--- a/LA.UM.7.6.2/LINUX/android/vendor/qcom/proprietary/mm-camera/mm-camera2/media-controller/modules/sensors/configs/msm8953_camera.xml
++++ b/LA.UM.7.6.2/LINUX/android/vendor/qcom/proprietary/mm-camera/mm-camera2/media-controller/modules/sensors/configs/msm8953_camera.xml
+@@ -86,64 +86,14 @@ LensInfo : Information of the lens present in the module.
+ <CameraConfigurationRoot>
+   <CameraModuleConfig>
+     <CameraId>0</CameraId>
+-    <SensorName>ov12a10</SensorName>
+-    <ActuatorName>dw9763</ActuatorName>
+-    <EepromName>ofilm_ohs0443_ov12a10</EepromName>
+-    <FlashName>pmic</FlashName>
+-    <ChromatixName>ov12a10_bear_chromatix</ChromatixName>
+-    <ModesSupported>1</ModesSupported>
+-    <Position>BACK</Position>
+-    <MountAngle>90</MountAngle>
+-    <CSIInfo>
+-      <CSIDCore>0</CSIDCore>
+-      <LaneMask>0x1F</LaneMask>
+-      <LaneAssign>0x4320</LaneAssign>
+-      <ComboMode>0</ComboMode>
+-    </CSIInfo>
+-    <LensInfo>
+-      <FocalLength>3.83</FocalLength>
+-      <FNumber>2.2</FNumber>
+-      <TotalFocusDistance>4.0</TotalFocusDistance>
+-      <HorizontalViewAngle>62.64</HorizontalViewAngle>
+-      <VerticalViewAngle>46.98</VerticalViewAngle>
+-      <MinFocusDistance>0.1</MinFocusDistance>
+-    </LensInfo>
+-  </CameraModuleConfig>
+-  <CameraModuleConfig>
+-    <CameraId>1</CameraId>
+-    <SensorName>ov13880</SensorName>
+-    <ActuatorName>dw9763b</ActuatorName>
+-    <EepromName>ofilm_ohs0443_ov13880</EepromName>
+-    <FlashName>pmic</FlashName>
+-    <ChromatixName>ov13880_chromatix</ChromatixName>
+-    <ModesSupported>1</ModesSupported>
+-    <Position>BACK_AUX</Position>
+-    <MountAngle>270</MountAngle>
+-    <CSIInfo>
+-      <CSIDCore>1</CSIDCore>
+-      <LaneMask>0x1F</LaneMask>
+-      <LaneAssign>0x4320</LaneAssign>
+-      <ComboMode>0</ComboMode>
+-    </CSIInfo>
+-    <LensInfo>
+-      <FocalLength>5.99</FocalLength>
+-      <FNumber>2.6</FNumber>
+-      <TotalFocusDistance>4.0</TotalFocusDistance>
+-      <HorizontalViewAngle>38.16</HorizontalViewAngle>
+-      <VerticalViewAngle>28.62</VerticalViewAngle>
+-      <MinFocusDistance>0.1</MinFocusDistance>
+-    </LensInfo>
+-  </CameraModuleConfig>
+-  <CameraModuleConfig>
+-    <CameraId>2</CameraId>
+     <SensorName>ov8856</SensorName>
+     <EepromName>truly_cmb433</EepromName>
+     <ChromatixName>ov8856_bear_chromatix</ChromatixName>
+     <ModesSupported>1</ModesSupported>
+-    <Position>FRONT</Position>
++    <Position>BACK</Position>
+     <MountAngle>270</MountAngle>
+     <CSIInfo>
+-      <CSIDCore>1</CSIDCore>
++      <CSIDCore>0</CSIDCore>
+       <LaneMask>0x1f</LaneMask>
+       <LaneAssign>0x4320</LaneAssign>
+       <ComboMode>0</ComboMode>
+@@ -157,81 +107,11 @@ LensInfo : Information of the lens present in the module.
+       <MinFocusDistance>0.1</MinFocusDistance>
+     </LensInfo>
+   </CameraModuleConfig>
+-  <CameraModuleConfig>
+-    <CameraId>0</CameraId>
+-    <SensorName>imx230</SensorName>
+-    <ActuatorName>lc898212xd_qc2002</ActuatorName>
+-    <EepromName>le2464c</EepromName>
+-    <FlashName>pmic</FlashName>
+-    <ChromatixName>imx230_qc2002_with_gyro_chromatix</ChromatixName>
+-    <ModesSupported>1</ModesSupported>
+-    <Position>BACK</Position>
+-    <MountAngle>360</MountAngle>
+-    <CSIInfo>
+-      <CSIDCore>0</CSIDCore>
+-      <LaneMask>0x1F</LaneMask>
+-      <LaneAssign>0x4320</LaneAssign>
+-      <ComboMode>0</ComboMode>
+-    </CSIInfo>
+-    <LensInfo>
+-      <FocalLength>4.73</FocalLength>
+-      <FNumber>2.2</FNumber>
+-      <TotalFocusDistance>1.9</TotalFocusDistance>
+-      <HorizontalViewAngle>64.1</HorizontalViewAngle>
+-      <VerticalViewAngle>51.6</VerticalViewAngle>
+-      <MinFocusDistance>0.1</MinFocusDistance>
+-    </LensInfo>
+-  </CameraModuleConfig>
+   <CameraModuleConfig>
+     <CameraId>2</CameraId>
+-    <SensorName>ov8865</SensorName>
+-    <ActuatorName>dw9714</ActuatorName>
+-    <EepromName>sunny_8865</EepromName>
+-    <ChromatixName>ov8865_chromatix</ChromatixName>
+-    <ModesSupported>1</ModesSupported>
+-    <Position>FRONT</Position>
+-    <MountAngle>270</MountAngle>
+-    <CSIInfo>
+-      <CSIDCore>1</CSIDCore>
+-      <LaneMask>0x7</LaneMask>
+-      <LaneAssign>0x4320</LaneAssign>
+-      <ComboMode>0</ComboMode>
+-    </CSIInfo>
+-    <LensInfo>
+-      <FocalLength>3.75</FocalLength>
+-      <FNumber>2.2</FNumber>
+-      <TotalFocusDistance>1.97</TotalFocusDistance>
+-      <HorizontalViewAngle>62.7</HorizontalViewAngle>
+-      <VerticalViewAngle>49.0</VerticalViewAngle>
+-      <MinFocusDistance>0.1</MinFocusDistance>
+-    </LensInfo>
+-  </CameraModuleConfig>
+-  <CameraModuleConfig>
+-    <CameraId>1</CameraId>
+-    <SensorName>ov2685</SensorName>
+-    <ModesSupported>1</ModesSupported>
+-    <Position>BACK_AUX</Position>
+-    <MountAngle>360</MountAngle>
+-    <CSIInfo>
+-      <CSIDCore>1</CSIDCore>
+-      <LaneMask>0x18</LaneMask>
+-      <LaneAssign>0x0003</LaneAssign>
+-      <ComboMode>1</ComboMode>
+-    </CSIInfo>
+-    <LensInfo>
+-      <FocalLength>3.79</FocalLength>
+-      <FNumber>2.4</FNumber>
+-      <TotalFocusDistance>0.478</TotalFocusDistance>
+-      <HorizontalViewAngle>54.8</HorizontalViewAngle>
+-      <VerticalViewAngle>42.5</VerticalViewAngle>
+-      <MinFocusDistance>0.1</MinFocusDistance>
+-    </LensInfo>
+-  </CameraModuleConfig>
+-  <CameraModuleConfig>
+-    <CameraId>2</CameraId>
+-    <SensorName>ov8858</SensorName>
+-    <EepromName>truly_cma481</EepromName>
+-    <ChromatixName>ov8858_chromatix</ChromatixName>
++    <SensorName>ov5645</SensorName>
++    <!-- <EepromName>truly_cma481</EepromName> -->
++    <!-- <ChromatixName>ov8858_chromatix</ChromatixName> -->
+     <ModesSupported>1</ModesSupported>
+     <Position>FRONT</Position>
+     <MountAngle>270</MountAngle>
+@@ -250,218 +130,4 @@ LensInfo : Information of the lens present in the module.
+       <MinFocusDistance>0.1</MinFocusDistance>
+     </LensInfo>
+   </CameraModuleConfig>
+-  <CameraModuleConfig>
+-    <CameraId>0</CameraId>
+-    <SensorName>s5k3m2xm</SensorName>
+-    <ActuatorName>dw9761b</ActuatorName>
+-    <EepromName>dw9761b_2d</EepromName>
+-    <ChromatixName>s5k3m2xm_chromatix_bear</ChromatixName>
+-    <ModesSupported>1</ModesSupported>
+-    <Position>BACK</Position>
+-    <MountAngle>90</MountAngle>
+-    <CSIInfo>
+-      <CSIDCore>0</CSIDCore>
+-      <LaneMask>0x1F</LaneMask>
+-      <LaneAssign>0x4320</LaneAssign>
+-      <ComboMode>0</ComboMode>
+-    </CSIInfo>
+-    <LensInfo>
+-      <FocalLength>3.68</FocalLength>
+-      <FNumber>2.2</FNumber>
+-      <TotalFocusDistance>1.2</TotalFocusDistance>
+-      <HorizontalViewAngle>77.1</HorizontalViewAngle>
+-      <VerticalViewAngle>77.1</VerticalViewAngle>
+-      <MinFocusDistance>0.1</MinFocusDistance>
+-    </LensInfo>
+-  </CameraModuleConfig>
+-  <CameraModuleConfig>
+-    <CameraId>0</CameraId>
+-    <SensorName>imx258</SensorName>
+-    <ActuatorName>lc898217xc</ActuatorName>
+-    <EepromName>imx258_gt24c32</EepromName>
+-    <FlashName>pmic</FlashName>
+-    <ChromatixName>imx258_bear_chromatix</ChromatixName>
+-    <ModesSupported>1</ModesSupported>
+-    <Position>BACK</Position>
+-    <MountAngle>270</MountAngle>
+-    <CSIInfo>
+-      <CSIDCore>0</CSIDCore>
+-      <LaneMask>0x1F</LaneMask>
+-      <LaneAssign>0x4320</LaneAssign>
+-      <ComboMode>0</ComboMode>
+-    </CSIInfo>
+-    <LensInfo>
+-      <FocalLength>3.47</FocalLength>
+-      <FNumber>2.2</FNumber>
+-      <TotalFocusDistance>1.9</TotalFocusDistance>
+-      <HorizontalViewAngle>63.84</HorizontalViewAngle>
+-      <VerticalViewAngle>47.88</VerticalViewAngle>
+-      <MinFocusDistance>0.1</MinFocusDistance>
+-    </LensInfo>
+-  </CameraModuleConfig>
+-  <CameraModuleConfig>
+-    <CameraId>1</CameraId>
+-    <SensorName>imx258_mono</SensorName>
+-    <ActuatorName>lc898217xc</ActuatorName>
+-    <EepromName>imx258_mono_gt24c32</EepromName>
+-    <ChromatixName>imx258_mono_bear_chromatix</ChromatixName>
+-    <ModesSupported>1</ModesSupported>
+-    <Position>BACK_AUX</Position>
+-    <MountAngle>270</MountAngle>
+-    <CSIInfo>
+-      <CSIDCore>1</CSIDCore>
+-      <LaneMask>0x1F</LaneMask>
+-      <LaneAssign>0x4320</LaneAssign>
+-      <ComboMode>0</ComboMode>
+-    </CSIInfo>
+-    <LensInfo>
+-      <FocalLength>3.47</FocalLength>
+-      <FNumber>2.2</FNumber>
+-      <TotalFocusDistance>1.9</TotalFocusDistance>
+-      <HorizontalViewAngle>63.84</HorizontalViewAngle>
+-      <VerticalViewAngle>47.88</VerticalViewAngle>
+-      <MinFocusDistance>0.1</MinFocusDistance>
+-    </LensInfo>
+-  </CameraModuleConfig>
+-  <CameraModuleConfig>
+-    <CameraId>0</CameraId>
+-    <SensorName>imx362</SensorName>
+-    <ActuatorName>lc898212xd</ActuatorName>
+-    <EepromName>onsemi_cat24c32_imx362</EepromName>
+-    <FlashName>pmic</FlashName>
+-    <ChromatixName>imx362_chromatix_bear</ChromatixName>
+-    <ModesSupported>1</ModesSupported>
+-    <Position>BACK</Position>
+-    <MountAngle>360</MountAngle>
+-    <CSIInfo>
+-      <CSIDCore>0</CSIDCore>
+-      <LaneMask>0x1F</LaneMask>
+-      <LaneAssign>0x4320</LaneAssign>
+-      <ComboMode>0</ComboMode>
+-    </CSIInfo>
+-    <LensInfo>
+-      <FocalLength>4.288</FocalLength>
+-      <FNumber>1.8</FNumber>
+-      <TotalFocusDistance>3.496</TotalFocusDistance>
+-      <HorizontalViewAngle>65.7</HorizontalViewAngle>
+-      <VerticalViewAngle>51.7</VerticalViewAngle>
+-      <MinFocusDistance>0.1</MinFocusDistance>
+-    </LensInfo>
+-  </CameraModuleConfig>
+-  <CameraModuleConfig>
+-    <CameraId>0</CameraId>
+-    <SensorName>imx298</SensorName>
+-    <ActuatorName>bu64297</ActuatorName>
+-    <FlashName>pmic</FlashName>
+-    <EepromName>sony_imx298</EepromName>
+-    <ChromatixName>imx298_chromatix</ChromatixName>
+-    <ModesSupported>1</ModesSupported>
+-    <Position>BACK</Position>
+-    <MountAngle>90</MountAngle>
+-    <CSIInfo>
+-      <CSIDCore>0</CSIDCore>
+-      <LaneMask>0x1F</LaneMask>
+-      <LaneAssign>0x4320</LaneAssign>
+-      <ComboMode>0</ComboMode>
+-    </CSIInfo>
+-    <LensInfo>
+-      <FocalLength>4.26</FocalLength>
+-      <FNumber>2.0</FNumber>
+-      <TotalFocusDistance>1.9</TotalFocusDistance>
+-      <HorizontalViewAngle>60.0</HorizontalViewAngle>
+-      <VerticalViewAngle>45.0</VerticalViewAngle>
+-      <MinFocusDistance>0.1</MinFocusDistance>
+-    </LensInfo>
+-  </CameraModuleConfig>
+-  <CameraModuleConfig>
+-    <CameraId>0</CameraId>
+-    <SensorName>s5k3p3sm</SensorName>
+-    <ChromatixName>s5k3p3sm_chromatix</ChromatixName>
+-    <ModesSupported>1</ModesSupported>
+-    <Position>BACK</Position>
+-    <MountAngle>90</MountAngle>
+-    <CSIInfo>
+-      <CSIDCore>0</CSIDCore>
+-      <LaneMask>0x1F</LaneMask>
+-      <LaneAssign>0x4320</LaneAssign>
+-      <ComboMode>0</ComboMode>
+-    </CSIInfo>
+-    <LensInfo>
+-      <FocalLength>4.73</FocalLength>
+-      <FNumber>2.2</FNumber>
+-      <TotalFocusDistance>1.9</TotalFocusDistance>
+-      <HorizontalViewAngle>64.1</HorizontalViewAngle>
+-      <VerticalViewAngle>51.6</VerticalViewAngle>
+-      <MinFocusDistance>0.1</MinFocusDistance>
+-    </LensInfo>
+-  </CameraModuleConfig>
+-  <CameraModuleConfig>
+-    <CameraId>0</CameraId>
+-    <SensorName>s5k2l7</SensorName>
+-    <ActuatorName>ak7371</ActuatorName>
+-    <EepromName>sunny_gt24c64_s5k2l7</EepromName>
+-    <FlashName>pmic</FlashName>
+-    <ChromatixName>s5k2l7_8953_chromatix</ChromatixName>
+-    <ModesSupported>1</ModesSupported>
+-    <Position>BACK</Position>
+-    <MountAngle>180</MountAngle>
+-    <CSIInfo>
+-      <CSIDCore>0</CSIDCore>
+-      <LaneMask>0x1F</LaneMask>
+-      <LaneAssign>0x4320</LaneAssign>
+-      <ComboMode>0</ComboMode>
+-    </CSIInfo>
+-    <LensInfo>
+-      <FocalLength>4.43</FocalLength>
+-      <FNumber>2.0</FNumber>
+-      <TotalFocusDistance>1.9</TotalFocusDistance>
+-      <HorizontalViewAngle>60.0</HorizontalViewAngle>
+-      <VerticalViewAngle>45.0</VerticalViewAngle>
+-      <MinFocusDistance>0.1</MinFocusDistance>
+-    </LensInfo>
+-  </CameraModuleConfig>
+-  <CameraModuleConfig>
+-    <CameraId>0</CameraId>
+-    <SensorName>imx274</SensorName>
+-    <ChromatixName>imx274_chromatix</ChromatixName>
+-    <ModesSupported>1</ModesSupported>
+-    <Position>BACK</Position>
+-    <MountAngle>360</MountAngle>
+-    <CSIInfo>
+-      <CSIDCore>0</CSIDCore>
+-      <LaneMask>0x1F</LaneMask>
+-      <LaneAssign>0x4320</LaneAssign>
+-      <ComboMode>0</ComboMode>
+-    </CSIInfo>
+-    <LensInfo>
+-      <FocalLength>4.73</FocalLength>
+-      <FNumber>2.2</FNumber>
+-      <TotalFocusDistance>1.9</TotalFocusDistance>
+-      <HorizontalViewAngle>64.1</HorizontalViewAngle>
+-      <VerticalViewAngle>51.6</VerticalViewAngle>
+-      <MinFocusDistance>0.1</MinFocusDistance>
+-    </LensInfo>
+-  </CameraModuleConfig>
+-  <CameraModuleConfig>
+-    <CameraId>0</CameraId>
+-    <SensorName>imx378</SensorName>
+-    <ChromatixName>imx378_chromatix</ChromatixName>
+-    <ModesSupported>1</ModesSupported>
+-    <Position>BACK</Position>
+-    <MountAngle>360</MountAngle>
+-    <CSIInfo>
+-      <CSIDCore>0</CSIDCore>
+-      <LaneMask>0x1F</LaneMask>
+-      <LaneAssign>0x4320</LaneAssign>
+-      <ComboMode>0</ComboMode>
+-    </CSIInfo>
+-    <LensInfo>
+-      <FocalLength>4.73</FocalLength>
+-      <FNumber>2.2</FNumber>
+-      <TotalFocusDistance>1.9</TotalFocusDistance>
+-      <HorizontalViewAngle>64.1</HorizontalViewAngle>
+-      <VerticalViewAngle>51.6</VerticalViewAngle>
+-      <MinFocusDistance>0.1</MinFocusDistance>
+-    </LensInfo>
+-  </CameraModuleConfig>
+-</CameraConfigurationRoot>
++ </CameraConfigurationRoot>
+\ No newline at end of file
+diff --git a/LA.UM.7.6.2/LINUX/android/vendor/qcom/proprietary/mm-camera/mm-camera2/media-controller/modules/sensors/sensor/libs/ov5645/ov5645_lib.h b/LA.UM.7.6.2/LINUX/android/vendor/qcom/proprietary/mm-camera/mm-camera2/media-controller/modules/sensors/sensor/libs/ov5645/ov5645_lib.h
+index e345633fec..eeaff3e925 100755
+--- a/LA.UM.7.6.2/LINUX/android/vendor/qcom/proprietary/mm-camera/mm-camera2/media-controller/modules/sensors/sensor/libs/ov5645/ov5645_lib.h
++++ b/LA.UM.7.6.2/LINUX/android/vendor/qcom/proprietary/mm-camera/mm-camera2/media-controller/modules/sensors/sensor/libs/ov5645/ov5645_lib.h
+@@ -387,7 +387,7 @@ static sensor_lib_t sensor_lib_ptr =
+     .sensor_id_info =
+     {
+       .sensor_id_reg_addr = 0x300a,
+-      .sensor_id = 0x5645,
++      .sensor_id = 0x5640,
+     },
+     .power_setting_array =
+     {
+@@ -397,42 +397,24 @@ static sensor_lib_t sensor_lib_ptr =
+           .seq_type = CAMERA_POW_SEQ_VREG,
+           .seq_val = CAMERA_VIO,
+           .config_val = 0,
+-          .delay = 1,
++          .delay = 10,
+         },
+         {
+           .seq_type = CAMERA_POW_SEQ_VREG,
+           .seq_val = CAMERA_VANA,
+           .config_val = 0,
+-          .delay = 1,
+-        },
+-        {
+-          .seq_type = CAMERA_POW_SEQ_VREG,
+-          .seq_val = CAMERA_VDIG,
+-          .config_val = 0,
+-          .delay = 1,
+-        },
+-        {
+-          .seq_type = CAMERA_POW_SEQ_GPIO,
+-          .seq_val = CAMERA_GPIO_STANDBY,
+-          .config_val = GPIO_OUT_LOW,
+-          .delay = 5,
+-        },
+-        {
+-          .seq_type = CAMERA_POW_SEQ_GPIO,
+-          .seq_val = CAMERA_GPIO_RESET,
+-          .config_val = GPIO_OUT_LOW,
+-          .delay = 5,
++          .delay = 10,
+         },
+         {
+           .seq_type = CAMERA_POW_SEQ_GPIO,
+-          .seq_val = CAMERA_GPIO_STANDBY,
++          .seq_val = CAMERA_GPIO_VDIG,
+           .config_val = GPIO_OUT_HIGH,
+-          .delay = 5,
++          .delay = 10,
+         },
+         {
+           .seq_type = CAMERA_POW_SEQ_GPIO,
+-          .seq_val = CAMERA_GPIO_RESET,
+-          .config_val = GPIO_OUT_HIGH,
++          .seq_val = CAMERA_GPIO_STANDBY,
++          .config_val = GPIO_OUT_LOW,
+           .delay = 10,
+         },
+         {
+@@ -442,47 +424,41 @@ static sensor_lib_t sensor_lib_ptr =
+           .delay = 10,
+         },
+       },
+-      .size = 8,
++      .size = 5,
+       .power_down_setting_a =
+       {
+         {
+           .seq_type = CAMERA_POW_SEQ_CLK,
+           .seq_val = CAMERA_MCLK,
+           .config_val = 0,
+-          .delay = 0,
++          .delay = 10,
+         },
+         {
+           .seq_type = CAMERA_POW_SEQ_GPIO,
+           .seq_val = CAMERA_GPIO_STANDBY,
+-          .config_val = GPIO_OUT_LOW,
+-          .delay = 1,
++          .config_val = GPIO_OUT_HIGH,
++          .delay = 10,
+         },
+         {
+           .seq_type = CAMERA_POW_SEQ_GPIO,
+-          .seq_val = CAMERA_GPIO_RESET,
++          .seq_val = CAMERA_GPIO_VDIG,
+           .config_val = GPIO_OUT_LOW,
+-          .delay = 1,
+-        },
+-        {
+-          .seq_type = CAMERA_POW_SEQ_VREG,
+-          .seq_val = CAMERA_VDIG,
+-          .config_val = 0,
+-          .delay = 0,
++          .delay = 10,
+         },
+         {
+           .seq_type = CAMERA_POW_SEQ_VREG,
+           .seq_val = CAMERA_VANA,
+           .config_val = 0,
+-          .delay = 0,
++          .delay = 10,
+         },
+         {
+           .seq_type = CAMERA_POW_SEQ_VREG,
+           .seq_val = CAMERA_VIO,
+           .config_val = 0,
+-          .delay = 0,
++          .delay = 10,
+         },
+       },
+-      .size_down = 6,
++      .size_down = 5,
+     },
+   },
+   .sensor_output =
+diff --git a/LA.UM.7.6.2/LINUX/android/vendor/qcom/proprietary/mm-camera/mm-camera2/media-controller/modules/sensors/sensor/libs/ov8856/ov8856_lib.h b/LA.UM.7.6.2/LINUX/android/vendor/qcom/proprietary/mm-camera/mm-camera2/media-controller/modules/sensors/sensor/libs/ov8856/ov8856_lib.h
+old mode 100755
+new mode 100644
+index 58ee65223f..5a75203e99
+--- a/LA.UM.7.6.2/LINUX/android/vendor/qcom/proprietary/mm-camera/mm-camera2/media-controller/modules/sensors/sensor/libs/ov8856/ov8856_lib.h
++++ b/LA.UM.7.6.2/LINUX/android/vendor/qcom/proprietary/mm-camera/mm-camera2/media-controller/modules/sensors/sensor/libs/ov8856/ov8856_lib.h
+@@ -501,29 +501,17 @@ static sensor_lib_t sensor_lib_ptr =
+           .config_val = 0,
+           .delay = 0,
+         },
+-        {
+-          .seq_type = CAMERA_POW_SEQ_VREG,
+-          .seq_val = CAMERA_VDIG,
+-          .config_val = 0,
+-          .delay = 0,
+-        },
+         {
+           .seq_type = CAMERA_POW_SEQ_GPIO,
+-          .seq_val = CAMERA_GPIO_STANDBY,
+-          .config_val = GPIO_OUT_LOW,
+-          .delay = 1,
++          .seq_val = CAMERA_GPIO_VDIG,
++          .config_val = GPIO_OUT_HIGH,
++          .delay = 10,
+         },
+         {
+           .seq_type = CAMERA_POW_SEQ_GPIO,
+           .seq_val = CAMERA_GPIO_RESET,
+           .config_val = GPIO_OUT_LOW,
+-          .delay = 5,
+-        },
+-        {
+-          .seq_type = CAMERA_POW_SEQ_GPIO,
+-          .seq_val = CAMERA_GPIO_STANDBY,
+-          .config_val = GPIO_OUT_HIGH,
+-          .delay = 5,
++          .delay = 10,
+         },
+         {
+           .seq_type = CAMERA_POW_SEQ_GPIO,
+@@ -538,44 +526,20 @@ static sensor_lib_t sensor_lib_ptr =
+           .delay = 10,
+         },
+       },
+-      .size = 8,
++      .size = 6,
+       .power_down_setting_a =
+       {
+         {
+           .seq_type = CAMERA_POW_SEQ_CLK,
+           .seq_val = CAMERA_MCLK,
+           .config_val = 0,
+-          .delay = 1,
+-        },
+-        {
+-          .seq_type = CAMERA_POW_SEQ_GPIO,
+-          .seq_val = CAMERA_GPIO_RESET,
+-          .config_val = GPIO_OUT_HIGH,
+-          .delay = 1,
+-        },
+-        {
+-          .seq_type = CAMERA_POW_SEQ_GPIO,
+-          .seq_val = CAMERA_GPIO_STANDBY,
+-          .config_val = GPIO_OUT_HIGH,
+-          .delay = 1,
+-        },
+-        {
+-          .seq_type = CAMERA_POW_SEQ_GPIO,
+-          .seq_val = CAMERA_GPIO_RESET,
+-          .config_val = GPIO_OUT_LOW,
+-          .delay = 1,
++          .delay = 10,
+         },
+         {
+           .seq_type = CAMERA_POW_SEQ_GPIO,
+-          .seq_val = CAMERA_GPIO_STANDBY,
++          .seq_val = CAMERA_GPIO_VDIG,
+           .config_val = GPIO_OUT_LOW,
+-          .delay = 0,
+-        },
+-        {
+-          .seq_type = CAMERA_POW_SEQ_VREG,
+-          .seq_val = CAMERA_VDIG,
+-          .config_val = 0,
+-          .delay = 0,
++          .delay = 10,
+         },
+         {
+           .seq_type = CAMERA_POW_SEQ_VREG,
+@@ -590,7 +554,7 @@ static sensor_lib_t sensor_lib_ptr =
+           .delay = 0,
+         },
+       },
+-      .size_down = 8,
++      .size_down = 4,
+     },
+   },
+   .sensor_output =
+--
+2.17.1
+

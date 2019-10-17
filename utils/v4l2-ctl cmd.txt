@@ -1,0 +1,56 @@
+
+// pixelformat 是 fourcc 字串
+
+	#define V4L2_PIX_FMT_RGB32   v4l2_fourcc('R', 'G', 'B', '4') /* 32  RGB-8-8-8-8   */
+	#define V4L2_PIX_FMT_YUV32   v4l2_fourcc('Y', 'U', 'V', '4') /* 32  YUV-8-8-8-8   */
+	
+	#define V4L2_PIX_FMT_RGB565  v4l2_fourcc('R', 'G', 'B', 'P') /* 16  RGB-5-6-5     */
+	
+
+// --stream-mmap=3 or stream-mmap ?
+// --stream-poll ?
+
+
+v4l2-ctl -d /dev/video2 \
+    --set-fmt-video=width=1920,height=1080,pixelformat=RGBP \
+    --stream-mmap=3 \
+    --stream-skip=3 \
+    --stream-to=/sdcard/frame.out \
+    --stream-count=1 \
+    --stream-poll	
+	
+v4l2-ctl -d /dev/video0 \
+    --set-fmt-video=width=1920,height=1080,pixelformat=RGBP \  
+    --stream-mmap \
+    --stream-skip=3 \
+    --stream-to=/sdcard/frame.out \
+    --stream-count=1 \
+	--stream-poll	
+
+v4l2-ctl -d /dev/video0 \
+    --set-fmt-video=width=1920,height=1080 \
+    --stream-mmap \
+    --stream-skip=3 \
+    --stream-count=10 \
+	--stream-poll	
+		
+v4l2-ctl -d /dev/video0 \
+	--stream-poll \
+    --stream-mmap &	
+
+v4l2-ctl -d /dev/video0 \
+    --stream-mmap &
+
+v4l2-ctl -d /dev/video0 \
+    --stream-mmap \
+    --stream-skip=3 \
+    --stream-count=10 \
+	--stream-to=/sdcard/frame.out &
+
+v4l2-ctl -d /dev/video0 \
+    --set-fmt-video=width=1920,height=1080,pixelformat=YUV4 \
+    --stream-mmap \
+    --stream-skip=3 \
+    --stream-count=3 \
+	--stream-to=/sdcard/frame.out \
+	--stream-poll
